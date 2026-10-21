@@ -203,11 +203,17 @@ if [ -n "$HAD_PREV" ] && [ -n "$DIFF_RANGE" ]; then
   DIFF_BODY=$(
     snap diff $DIFF_RANGE --numstat --no-renames -- '*.py' '*.sh' '*.md' '*.R' '*.tex' 2>/dev/null \
       | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { print $1+$2 "\t" $3 }' \
-      | sort -k1,1nr | head -"$DIFF_MAX_FILES" | cut -f2 \
-      | while IFS= read -r f; do
-          printf '\n===== %s =====\n' "$f"
-          snap diff $DIFF_RANGE -- "$f" 2>/dev/null | head -c "$DIFF_PER_FILE"
-        done | head -c "$DIFF_BUDGET"
+      | sort -k1,1nr | cut -f2 \
+      | { n=0; seen=" "
+          while [ "$n" -lt "$DIFF_MAX_FILES" ] && IFS= read -r f; do
+            d=$(snap diff $DIFF_RANGE -- "$f" 2>/dev/null | head -c "$DIFF_PER_FILE")
+            # The same change copied into many places (e.g. code saved into every experiment
+            # folder) is shown once; compare the diff body without its path headers.
+            h=$(printf '%s' "$d" | grep -v -e '^diff --git' -e '^index ' -e '^--- ' -e '^+++ ' -e '^new file mode' -e '^deleted file mode' | git hash-object --stdin)
+            case "$seen" in *" $h "*) continue ;; esac
+            seen="$seen$h "; n=$((n + 1))
+            printf '\n===== %s =====\n%s\n' "$f" "$d"
+          done; } | head -c "$DIFF_BUDGET"
   )
 fi
 
