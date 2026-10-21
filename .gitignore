@@ -1,0 +1,3 @@
+cron.log
+.snapshot.git/
+__pycache__/

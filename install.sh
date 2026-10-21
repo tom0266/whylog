@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# worklog 설치 — 이 스크립트 하나로 매일 자동 일지가 돌기 시작한다.
+# 몇 번을 다시 실행해도 안전하다(멱등).
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONF="$SCRIPT_DIR/worklog.conf"
+CRON_TIME="${CRON_TIME:-0 22}"        # 기본 매일 22:00. 예) CRON_TIME="30 19" ./install.sh
+
+say()  { echo "  $*"; }
+fail() { echo "[error] $*" >&2; exit 1; }
+
+echo "== worklog install =="
+
+# ── 1. 필수 도구 ──
+echo "[1/6] Checking requirements"
+command -v git     >/dev/null || fail "git not found."
+command -v python3 >/dev/null || fail "python3 not found."
+command -v crontab >/dev/null || fail "crontab not found."
+CLAUDE_FOUND=$(command -v claude 2>/dev/null || true)
+[ -z "$CLAUDE_FOUND" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE_FOUND="$HOME/.local/bin/claude"
+[ -z "$CLAUDE_FOUND" ] && fail "claude CLI not found. Install Claude Code and run again."
+say "claude: $CLAUDE_FOUND"
+
+# ── 2. 설정 ──
+echo "[2/6] Reading config"
+[ -f "$CONF" ] || fail "worklog.conf not found ($CONF)"
+# shellcheck source=/dev/null
+. "$CONF"
+: "${TRACK_REPO:=$HOME}"
+: "${WORKLOG_DIR:=$SCRIPT_DIR}"
+say "Tracked folder (TRACK_REPO): $TRACK_REPO"
+say "Log repo (WORKLOG_DIR): $WORKLOG_DIR"
+say "Model: ${MODEL:-opus} / language: ${LANGUAGE:-ko} / schedule: ${CRON_TIME} (min hour)"
+[ -d "$TRACK_REPO" ] || fail "TRACK_REPO does not exist: $TRACK_REPO"
+mkdir -p "$WORKLOG_DIR"
+
+# ── 3. 일지 저장소 (git) ──
+echo "[3/6] Preparing the log repo"
+if [ ! -d "$WORKLOG_DIR/.git" ]; then
+  git -C "$WORKLOG_DIR" init -q
+  git -C "$WORKLOG_DIR" checkout -q -b main 2>/dev/null || true
+  printf 'cron.log\n.snapshot.git/\n' > "$WORKLOG_DIR/.gitignore"
+  say "git repo created"
+else
+  say "git repo already exists"
+fi
+
+# 도구 저장소를 clone 해 왔다면 origin 이 '남의 저장소'를 가리킨다.
+# 그대로 두면 매일 밤 내 일지를 그쪽으로 push 하려 든다 — 그 경우에만 끊는다.
+# (template 으로 만든 내 저장소는 origin 이 나를 가리키므로 건드리면 안 된다)
+TOOL_REPO=$(cat "$SCRIPT_DIR/.worklog-template" 2>/dev/null)
+if [ -n "$TOOL_REPO" ] && [ -d "$WORKLOG_DIR/.git" ]; then
+  CUR_ORIGIN=$(git -C "$WORKLOG_DIR" remote get-url origin 2>/dev/null || true)
+  case "$CUR_ORIGIN" in
+    *"$TOOL_REPO"*)
+      git -C "$WORKLOG_DIR" remote remove origin
+      say "Removed the tool repo origin (so your logs are never pushed there)" ;;
+  esac
+fi
+
+if ! git -C "$WORKLOG_DIR" remote get-url origin >/dev/null 2>&1; then
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    read -r -p "  Create a private GitHub repo for your logs? (enter a repo name, or Enter to skip) " REPO
+    if [ -n "${REPO:-}" ]; then
+      gh repo create "$REPO" --private --source "$WORKLOG_DIR" --remote origin \
+        && gh auth setup-git \
+        && say "Remote connected: $REPO"
+    else
+      say "No remote; logs stay local."
+    fi
+  else
+    say "gh not installed or not logged in → logs stay local (add one later with git remote add origin)."
+  fi
+else
+  say "Remote: $(git -C "$WORKLOG_DIR" remote get-url origin)"
+fi
+
+# ── 4. 스냅샷 저장소 ──
+echo "[4/6] Preparing the code snapshot repo"
+SNAP="$WORKLOG_DIR/.snapshot.git"
+if [ ! -d "$SNAP" ]; then
+  say "Taking the first snapshot (this is the baseline; exact daily diffs start tomorrow)"
+  bash "$SCRIPT_DIR/claude_log.sh" --dry-run >/dev/null 2>&1   # exclude 포함해 스냅샷 초기화
+  snap() { git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"; }
+  for pat in '*.py' '*.md' '*.sh' '*.ipynb' '*.tex' '*.R' '*.yaml' '*.yml'; do
+    snap add -A -- "$pat" 2>/dev/null || true
+  done
+  snap commit -q -m "snapshot baseline $(date +%Y-%m-%d\ %H:%M)" >/dev/null 2>&1 || true
+  say "Baseline committed ($(snap ls-files | wc -l) files tracked)"
+else
+  say "Snapshot repo already exists ($(git --git-dir="$SNAP" ls-files | wc -l) files tracked)"
+fi
+
+# ── 5. cron 등록 ──
+echo "[5/6] Registering cron jobs"
+LINE="${CRON_TIME} * * * /bin/bash $SCRIPT_DIR/claude_log.sh >> $WORKLOG_DIR/cron.log 2>&1"
+# 주간 요약은 일요일, 일일 기록이 끝난 뒤(30분 후)에 돌려야 그 주 마지막 날이 포함된다
+CM=${CRON_TIME%% *}; CH=${CRON_TIME#* }
+WM=$(( (CM + 30) % 60 )); WH=$(( (CH + (CM + 30) / 60) % 24 ))
+WLINE="$WM $WH * * 0 /bin/bash $SCRIPT_DIR/rollup.sh week >> $WORKLOG_DIR/cron.log 2>&1"
+CUR=$(crontab -l 2>/dev/null | grep -v -e 'claude_log.sh' -e 'rollup.sh' || true)
+PATHLINE="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+printf '%s\n%s\n%s\n%s\n' "$PATHLINE" "$(printf '%s' "$CUR" | grep -v '^PATH=' || true)" "$LINE" "$WLINE" \
+  | grep -v '^$' | crontab -
+say "daily : $LINE"
+say "weekly: $WLINE"
+
+# ── 6. 동작 확인 ──
+echo "[6/6] Test run (--dry-run, nothing is written)"
+bash "$SCRIPT_DIR/claude_log.sh" --dry-run 2>&1 | head -8
+
+cat <<EOF
+
+== Done ==
+Your daily log will be written every day at ${CRON_TIME#* }:$(printf '%02d' "${CRON_TIME%% *}").
+
+  Write today's log now : bash $SCRIPT_DIR/claude_log.sh
+  Preview only          : bash $SCRIPT_DIR/claude_log.sh --dry-run
+  Recover a missed day  : bash $SCRIPT_DIR/claude_log.sh --date YYYY-MM-DD
+  Weekly summary        : bash $SCRIPT_DIR/rollup.sh week
+EOF
