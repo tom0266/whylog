@@ -128,9 +128,31 @@ node_modules/
 *.db
 *.sqlite
 EOF
-  # Exclude the log repo if it sits inside the work folder; otherwise yesterday's log shows up as today's 'code change'
-  case "$WORKLOG_DIR" in "$TRACK_REPO"/*) echo "/${WORKLOG_DIR#"$TRACK_REPO"/}/" >> "$SNAP/info/exclude" ;; esac
 fi
+# Package/environment folders hold library code, never research work. They are kept in the exclude
+# file on every run, so older installs get them too. (A new conda env once filled a whole day's
+# diff budget with site-packages.) Mid-path patterns need **/ to match at any depth.
+ENV_EXCLUDES='site-packages/
+dist-packages/
+**/lib/python3*/
+**/etc/conda/
+__pycache__/
+.venv/
+venv/
+.ipynb_checkpoints/
+/miniconda3/
+/anaconda3/
+/miniforge3/
+/mambaforge/
+/.conda/
+/.cache/
+/.local/'
+# Exclude the log repo if it sits inside the work folder; otherwise yesterday's log shows up as today's 'code change'
+case "$WORKLOG_DIR" in "$TRACK_REPO"/*) ENV_EXCLUDES="$ENV_EXCLUDES
+/${WORKLOG_DIR#"$TRACK_REPO"/}/" ;; esac
+while IFS= read -r pat; do
+  grep -qxF -- "$pat" "$SNAP/info/exclude" || echo "$pat" >> "$SNAP/info/exclude"
+done <<< "$ENV_EXCLUDES"
 [ "$INIT_ONLY" -eq 1 ] && exit 0
 
 # Snapshot helper (-C makes pathspecs relative to the work folder root)
@@ -158,6 +180,13 @@ if [ -n "$TARGET_DATE" ] || [ -n "$TODAY_SNAP" ]; then
     echo "[warn] no snapshot commit for $DATE — writing from session evidence only, without a code diff" >&2
   fi
 else
+  # Files that are tracked but now excluded (e.g. after the list above grew) would keep showing up
+  # in diffs. Untrack them once, in a separate commit, so they don't pollute today's diff.
+  if [ "$DRY_RUN" -eq 0 ] && [ -n "$HAD_PREV" ] && [ -n "$(snap ls-files -ci --exclude-from="$SNAP/info/exclude" | head -1)" ]; then
+    snap ls-files -ci --exclude-from="$SNAP/info/exclude" -z \
+      | xargs -0 git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" rm -q --cached --
+    snap commit -q -m "housekeeping: untrack excluded files" >/dev/null 2>&1 || true
+  fi
   # Add each pattern separately: git add aborts entirely if any pathspec matches nothing, so passing
   # them together would empty the whole diff just because one extension wasn't touched that day.
   for pat in '*.py' '*.md' '*.sh' '*.ipynb' '*.tex' '*.R' '*.yaml' '*.yml'; do

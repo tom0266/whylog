@@ -116,7 +116,7 @@ whylog/
 
 - **Keep your log repo private.** It records what you did and why: unpublished results, failed attempts and the reasoning behind decisions. That honesty is what makes the log useful, and making it public invites self-censorship. To share, keep the original private and export only the weekly summaries.
 - **Code diffs and your prompts are sent to Claude** when the summary is generated. If your organization restricts sending code outside, limit `TRACK_REPO` accordingly.
-- To exclude a folder from tracking, add it to `.snapshot.git/info/exclude`. Editor and terminal settings folders are excluded by default.
+- To exclude a folder from tracking, add it to `.snapshot.git/info/exclude`. Package and environment folders (conda, venv, `site-packages`) and editor settings are excluded by default, so installing a library never floods the day's diff.
 - If `.claude/` is in your work folder's `.gitignore`, work on skills and agents will not appear in the code diff. It still shows up in the session evidence.
 - Sessions after the nightly run are not in that day's log. Their code changes appear in the next day's diff. Move `CRON_TIME` later if you often work late.
 
