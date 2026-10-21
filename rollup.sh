@@ -9,7 +9,7 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-[ -f "${WORKLOG_CONF:-$SCRIPT_DIR/worklog.conf}" ] && . "${WORKLOG_CONF:-$SCRIPT_DIR/worklog.conf}"
+[ -f "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}" ] && . "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}"
 : "${WORKLOG_DIR:=$SCRIPT_DIR}"
 : "${MODEL:=opus}"
 : "${TIMEOUT_SEC:=600}"
@@ -66,7 +66,7 @@ PY
 
 if [ "$MODE" = "index" ]; then
   make_index > "$WORKLOG_DIR/INDEX.md"
-  echo "INDEX.md 갱신 완료 ($(grep -c '^| \[' "$WORKLOG_DIR/INDEX.md") 일)"
+  echo "INDEX.md updated ($(grep -c '^| \[' "$WORKLOG_DIR/INDEX.md") days)"
   exit 0
 fi
 
@@ -91,7 +91,7 @@ elif [ "$MODE" = "month" ]; then
   [ "$LANGUAGE" = "en" ] && TITLE="Monthly summary $M"
   SPAN="이번 달"
 else
-  echo "사용법: $0 {week [YYYY-MM-DD] | month [YYYY-MM] | index}" >&2; exit 1
+  echo "usage: $0 {week [YYYY-MM-DD] | month [YYYY-MM] | index}" >&2; exit 1
 fi
 
 # ── 해당 기간 일지 수집 ──
@@ -110,7 +110,7 @@ $(cat "$F")"
 done
 
 if [ "$N" -eq 0 ]; then
-  echo "[skip] $START ~ $END 구간에 일지가 없습니다."; exit 0
+  echo "[skip] no daily logs between $START and $END"; exit 0
 fi
 
 PROMPT="[worklog-auto] 아래는 한 연구자의 일일 작업 일지 ${N}일치입니다. 이것을 ${SPAN} 단위 요약으로 다시 쓰세요.
@@ -128,9 +128,9 @@ ${BODY}"
 
 [Output language] Write the summary in English. Use these labels: **Key results**, **Progress by project**, **Carried over**."
 
-echo "[$TITLE] 일지 ${N}일치 → 요약 생성 중…"
+echo "[$TITLE] summarizing ${N} daily logs…"
 OUT=$(timeout "$TIMEOUT_SEC" "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
-[ -z "$OUT" ] && { echo "[error] 요약 생성 실패"; exit 1; }
+[ -z "$OUT" ] && { echo "[error] summary generation failed"; exit 1; }
 
 mkdir -p "$(dirname "$OUTFILE")"
 {
@@ -144,7 +144,7 @@ mkdir -p "$(dirname "$OUTFILE")"
   echo
   echo "$OUT"
 } > "$OUTFILE"
-echo "생성: $OUTFILE"
+echo "written: $OUTFILE"
 
 make_index > "$WORKLOG_DIR/INDEX.md"
-echo "INDEX.md 갱신 완료"
+echo "INDEX.md updated"

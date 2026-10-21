@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Shell](https://img.shields.io/badge/bash-%2B%20python3-4EAA25)
 ![Requires Claude Code](https://img.shields.io/badge/requires-Claude%20Code-555)
+[![lint](https://github.com/tom0266/whylog/actions/workflows/lint.yml/badge.svg)](https://github.com/tom0266/whylog/actions/workflows/lint.yml)
 
 **Claude Code 세션 기록과 코드 diff로 매일 연구 일지를 자동으로 써 주는 도구.**
 
@@ -26,24 +27,27 @@
 - **계기**: 프로파일링 중 "왜 val이 train보다 좋지?"라는 의문.
 ```
 
+전체 샘플은 [`examples/`](examples/)에 있습니다: 일일 일지(영어·한국어), 주간 요약, 인덱스.
+
 ## 특징
 
 - **완전 자동**: 매일 밤 cron이 씁니다. 세션을 열어 둘 필요도, 뭔가 입력할 필요도 없습니다.
 - **무엇을 바꿨나 — `git log`가 아닌 스냅샷 diff**: 커밋하지 않은 작업이나 늦게 한 커밋도 그날 것으로 정확히 잡힙니다.
 - **왜 했나 — 세션 기록**: Claude Code 트랜스크립트에서 내 지시, 편집한 파일, 실행한 명령, 세션의 결론을 뽑아 변경마다 의도를 짝지어 줍니다.
-- **스스로 복구**: 서버가 꺼져 밤 실행을 놓쳐도, 다음 실행이 최근 3일 중 빠진 날을 메웁니다.
+- **스스로 복구**: 서버가 꺼져 밤 실행을 놓치거나 요약이 실패해도, 다음 실행이 최근 3일 중 빠진 날을 메웁니다.
+- **쉬는 날은 공짜**: 활동이 없는 날은 모델을 부르지 않고 한 줄만 남깁니다.
 - **롤업**: 주간·월간 요약, 그리고 날짜별 TL;DR 한 줄을 모은 `INDEX.md`.
 - **내 소유의 기록**: 내 git 저장소에 쌓이는 평범한 Markdown. 버전이 남고 비공개 원격에 push됩니다.
-- **한국어/영어**: `worklog.conf`의 `LANGUAGE`로 고릅니다.
+- **한국어/영어**: `whylog.conf`의 `LANGUAGE`로 고릅니다.
 
 ## 5분 설치
 
-필요한 것: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, 로그인 상태), `git`, `python3`, `cron`. 선택: `gh` (비공개 GitHub 저장소를 대신 만들어 줌).
+필요한 것: Linux, [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, 로그인 상태), `git`, `python3`, `cron`. 선택: `gh` (비공개 GitHub 저장소를 대신 만들어 줌). macOS는 아직 지원하지 않습니다 (GNU `date -d`, `timeout` 사용).
 
 ```bash
-git clone https://github.com/tom0266/whylog ~/worklog
-cd ~/worklog
-vi worklog.conf        # 대개 그대로 둬도 됩니다 (아래 참조)
+git clone https://github.com/tom0266/whylog ~/whylog
+cd ~/whylog
+vi whylog.conf        # 대개 그대로 둬도 됩니다 (아래 참조)
 bash install.sh
 ```
 
@@ -53,12 +57,12 @@ bash install.sh
 
 실행 시각을 바꾸려면 `CRON_TIME="30 19" bash install.sh` (분 시 순서, 기본 `0 22` = 밤 10시).
 
-## 설정 (`worklog.conf`)
+## 설정 (`whylog.conf`)
 
 | 항목 | 기본값 | 설명 |
 |---|---|---|
 | `TRACK_REPO` | `$HOME` | 기록 대상 작업 폴더. 이 아래의 코드·문서 변경과 세션이 대상 |
-| `WORKLOG_DIR` | `$HOME/worklog` | 일지가 쌓이는 곳 |
+| `WORKLOG_DIR` | (이 폴더) | 일지가 쌓이는 곳 |
 | `MODEL` | `opus` | 요약 모델. 사용량을 줄이려면 `sonnet` |
 | `LANGUAGE` | `ko` | 일지 언어: `ko` 또는 `en` |
 | `CLAUDE_BIN` | (자동 탐지) | `claude` 실행 파일 경로 |
@@ -82,9 +86,9 @@ diff는 하루 수십만 자에 이르므로 전부 넣을 수 없습니다. **�
 
 | 하고 싶은 것 | 명령 |
 |---|---|
-| 지금 즉시 오늘 일지 생성 | `bash claude_log.sh` |
-| 기록하지 않고 결과만 미리보기 | `bash claude_log.sh --dry-run` |
-| 놓친 날 복구 | `bash claude_log.sh --date 2026-08-13` |
+| 지금 즉시 오늘 일지 생성 | `bash daily.sh` |
+| 기록하지 않고 결과만 미리보기 | `bash daily.sh --dry-run` |
+| 놓친 날 복구 | `bash daily.sh --date 2026-08-13` |
 | 주간 요약 | `bash rollup.sh week` |
 | 월간 요약 | `bash rollup.sh month 2026-08` |
 | 인덱스 갱신 | `bash rollup.sh index` |
@@ -96,13 +100,14 @@ diff는 하루 수십만 자에 이르므로 전부 넣을 수 없습니다. **�
 ## 구조
 
 ```
-worklog/
-├── worklog.conf        # 설정 — 환경이 다르면 여기만 고치면 된다
-├── install.sh          # 설치 (멱등)
-├── claude_log.sh       # 일일 기록 (cron 매일 밤)
-├── rollup.sh           # 주간/월간 요약 + INDEX (cron 일요일 밤)
-├── extract_sessions.py # 세션 트랜스크립트 → 이벤트 추출
-├── INDEX.md            # 전체 날짜의 TL;DR 한 줄 목록
+whylog/
+├── whylog.conf          # 설정 — 환경이 다르면 여기만 고치면 된다
+├── install.sh           # 설치 (멱등)
+├── daily.sh             # 일일 기록 (cron 매일 밤)
+├── rollup.sh            # 주간/월간 요약 + INDEX (cron 일요일 밤)
+├── extract_sessions.py  # 세션 트랜스크립트 → 이벤트 추출
+├── examples/            # 출력 샘플
+├── INDEX.md             # 전체 날짜의 TL;DR 한 줄 목록
 └── YYYY-MM/YYYY-MM-DD.md
 ```
 
@@ -117,10 +122,10 @@ worklog/
 ## 제거
 
 ```bash
-crontab -l | grep -v -e claude_log.sh -e rollup.sh | crontab -
+crontab -l | grep -v -e whylog/daily.sh -e whylog/rollup.sh | crontab -
 ```
 
-일지가 더 필요 없으면 폴더를 지우면 됩니다.
+`whylog`가 아닌 다른 폴더 이름으로 설치했다면 그 이름으로 바꿔 넣으세요. 일지가 더 필요 없으면 폴더를 지우면 됩니다.
 
 ## 라이선스
 

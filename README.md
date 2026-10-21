@@ -5,6 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Shell](https://img.shields.io/badge/bash-%2B%20python3-4EAA25)
 ![Requires Claude Code](https://img.shields.io/badge/requires-Claude%20Code-555)
+[![lint](https://github.com/tom0266/whylog/actions/workflows/lint.yml/badge.svg)](https://github.com/tom0266/whylog/actions/workflows/lint.yml)
 
 **A daily research log that writes itself from your Claude Code sessions and code diffs.**
 
@@ -27,24 +28,27 @@ validation. Fixed the split, then re-ran the baseline.
 - **Trigger**: The question "why is val better than train?" during profiling.
 ```
 
+More samples in [`examples/`](examples/): a full daily log, a weekly summary and the index.
+
 ## Features
 
 - **Fully automatic.** A nightly cron job writes the log. No session needs to be open, and there is nothing to type.
 - **What changed: a snapshot diff, not `git log`.** Uncommitted work and late commits are still captured correctly.
 - **Why it changed: your sessions.** Your prompts, edited files, commands and each session's conclusion are extracted from Claude Code transcripts, so every change is paired with its intent.
-- **Heals itself.** If the server was down at night, the next run backfills any of the last 3 days that are missing.
+- **Heals itself.** If the server was down or a summary failed, the next run fills in any of the last 3 days that are missing.
+- **Quiet days are free.** With no activity, it writes a one-line entry without calling the model.
 - **Rollups.** Weekly and monthly summaries, plus an `INDEX.md` with one TL;DR line per day.
 - **Your own archive.** Plain Markdown in a git repo you own, versioned and pushed to a private remote.
-- **Korean or English.** Set `LANGUAGE` in `worklog.conf`.
+- **Korean or English.** Set `LANGUAGE` in `whylog.conf`.
 
 ## Quick start
 
-Requirements: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, logged in), `git`, `python3`, `cron`. Optional: `gh`, to create the private GitHub repo for you.
+Requirements: Linux, [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, logged in), `git`, `python3`, `cron`. Optional: `gh`, to create the private GitHub repo for you. macOS is not supported yet (the scripts use GNU `date -d` and `timeout`).
 
 ```bash
-git clone https://github.com/tom0266/whylog ~/worklog
-cd ~/worklog
-vi worklog.conf        # usually fine as is (see below)
+git clone https://github.com/tom0266/whylog ~/whylog
+cd ~/whylog
+vi whylog.conf        # usually fine as is (see below)
 bash install.sh
 ```
 
@@ -54,12 +58,12 @@ bash install.sh
 
 To change the run time: `CRON_TIME="30 19" bash install.sh` (minute hour; the default `0 22` is 10 pm).
 
-## Configuration (`worklog.conf`)
+## Configuration (`whylog.conf`)
 
 | Key | Default | Description |
 |---|---|---|
 | `TRACK_REPO` | `$HOME` | Folder to track. Code/doc changes and Claude Code sessions under it are logged |
-| `WORKLOG_DIR` | `$HOME/worklog` | Where the logs are kept |
+| `WORKLOG_DIR` | (this folder) | Where the logs are kept |
 | `MODEL` | `opus` | Summarizing model. Use `sonnet` to save usage |
 | `LANGUAGE` | `ko` | Log language: `ko` or `en` |
 | `CLAUDE_BIN` | (auto) | Path to the `claude` executable |
@@ -83,9 +87,9 @@ Commits made that day, including those in independent git repos directly under `
 
 | Task | Command |
 |---|---|
-| Write today's log now | `bash claude_log.sh` |
-| Preview without writing | `bash claude_log.sh --dry-run` |
-| Recover a missed day | `bash claude_log.sh --date 2026-08-13` |
+| Write today's log now | `bash daily.sh` |
+| Preview without writing | `bash daily.sh --dry-run` |
+| Recover a missed day | `bash daily.sh --date 2026-08-13` |
 | Weekly summary | `bash rollup.sh week` |
 | Monthly summary | `bash rollup.sh month 2026-08` |
 | Rebuild the index | `bash rollup.sh index` |
@@ -97,13 +101,14 @@ If a summary is wrong, ask Claude in any session to "fix that part of today's lo
 ## Layout
 
 ```
-worklog/
-├── worklog.conf        # settings: edit this file if your setup differs
-├── install.sh          # installer (idempotent)
-├── claude_log.sh       # daily log (cron, nightly)
-├── rollup.sh           # weekly/monthly summaries + INDEX (cron, Sunday)
-├── extract_sessions.py # session transcripts → events
-├── INDEX.md            # one TL;DR line per day
+whylog/
+├── whylog.conf          # settings: edit this file if your setup differs
+├── install.sh           # installer (idempotent)
+├── daily.sh             # daily log (cron, nightly)
+├── rollup.sh            # weekly/monthly summaries + INDEX (cron, Sunday)
+├── extract_sessions.py  # session transcripts → events
+├── examples/            # sample outputs
+├── INDEX.md             # one TL;DR line per day
 └── YYYY-MM/YYYY-MM-DD.md
 ```
 
@@ -118,10 +123,10 @@ worklog/
 ## Uninstall
 
 ```bash
-crontab -l | grep -v -e claude_log.sh -e rollup.sh | crontab -
+crontab -l | grep -v -e whylog/daily.sh -e whylog/rollup.sh | crontab -
 ```
 
-Then delete the folder if you no longer need the logs.
+If you installed into a folder not named `whylog`, use that folder name instead. Then delete the folder if you no longer need the logs.
 
 ## License
 

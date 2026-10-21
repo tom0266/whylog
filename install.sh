@@ -4,13 +4,13 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONF="$SCRIPT_DIR/worklog.conf"
+CONF="$SCRIPT_DIR/whylog.conf"
 CRON_TIME="${CRON_TIME:-0 22}"        # 기본 매일 22:00. 예) CRON_TIME="30 19" ./install.sh
 
 say()  { echo "  $*"; }
 fail() { echo "[error] $*" >&2; exit 1; }
 
-echo "== worklog install =="
+echo "== whylog install =="
 
 # ── 1. 필수 도구 ──
 echo "[1/6] Checking requirements"
@@ -24,7 +24,7 @@ say "claude: $CLAUDE_FOUND"
 
 # ── 2. 설정 ──
 echo "[2/6] Reading config"
-[ -f "$CONF" ] || fail "worklog.conf not found ($CONF)"
+[ -f "$CONF" ] || fail "whylog.conf not found ($CONF)"
 # shellcheck source=/dev/null
 . "$CONF"
 : "${TRACK_REPO:=$HOME}"
@@ -49,7 +49,7 @@ fi
 # 도구 저장소를 clone 해 왔다면 origin 이 '남의 저장소'를 가리킨다.
 # 그대로 두면 매일 밤 내 일지를 그쪽으로 push 하려 든다 — 그 경우에만 끊는다.
 # (template 으로 만든 내 저장소는 origin 이 나를 가리키므로 건드리면 안 된다)
-TOOL_REPO=$(cat "$SCRIPT_DIR/.worklog-template" 2>/dev/null)
+TOOL_REPO=$(cat "$SCRIPT_DIR/.whylog-template" 2>/dev/null)
 if [ -n "$TOOL_REPO" ] && [ -d "$WORKLOG_DIR/.git" ]; then
   CUR_ORIGIN=$(git -C "$WORKLOG_DIR" remote get-url origin 2>/dev/null || true)
   case "$CUR_ORIGIN" in
@@ -81,7 +81,7 @@ echo "[4/6] Preparing the code snapshot repo"
 SNAP="$WORKLOG_DIR/.snapshot.git"
 if [ ! -d "$SNAP" ]; then
   say "Taking the first snapshot (this is the baseline; exact daily diffs start tomorrow)"
-  bash "$SCRIPT_DIR/claude_log.sh" --dry-run >/dev/null 2>&1   # exclude 포함해 스냅샷 초기화
+  bash "$SCRIPT_DIR/daily.sh" --init-snapshot >/dev/null 2>&1   # exclude 포함해 스냅샷 초기화 (모델 호출 없음)
   snap() { git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"; }
   for pat in '*.py' '*.md' '*.sh' '*.ipynb' '*.tex' '*.R' '*.yaml' '*.yml'; do
     snap add -A -- "$pat" 2>/dev/null || true
@@ -94,29 +94,30 @@ fi
 
 # ── 5. cron 등록 ──
 echo "[5/6] Registering cron jobs"
-LINE="${CRON_TIME} * * * /bin/bash $SCRIPT_DIR/claude_log.sh >> $WORKLOG_DIR/cron.log 2>&1"
+# cron 은 .bashrc 를 읽지 않으므로 PATH 는 이 줄에만 붙인다 (crontab 전체의 PATH= 는 건드리지 않는다)
+CPATH="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
+LINE="${CRON_TIME} * * * $CPATH /bin/bash $SCRIPT_DIR/daily.sh >> $WORKLOG_DIR/cron.log 2>&1"
 # 주간 요약은 일요일, 일일 기록이 끝난 뒤(30분 후)에 돌려야 그 주 마지막 날이 포함된다
 CM=${CRON_TIME%% *}; CH=${CRON_TIME#* }
 WM=$(( (CM + 30) % 60 )); WH=$(( (CH + (CM + 30) / 60) % 24 ))
-WLINE="$WM $WH * * 0 /bin/bash $SCRIPT_DIR/rollup.sh week >> $WORKLOG_DIR/cron.log 2>&1"
-CUR=$(crontab -l 2>/dev/null | grep -v -e 'claude_log.sh' -e 'rollup.sh' || true)
-PATHLINE="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
-printf '%s\n%s\n%s\n%s\n' "$PATHLINE" "$(printf '%s' "$CUR" | grep -v '^PATH=' || true)" "$LINE" "$WLINE" \
-  | grep -v '^$' | crontab -
+WLINE="$WM $WH * * 0 $CPATH /bin/bash $SCRIPT_DIR/rollup.sh week >> $WORKLOG_DIR/cron.log 2>&1"
+# 이 폴더의 스크립트를 부르는 줄만 교체한다 (다른 rollup.sh 등 남의 cron 은 그대로)
+CUR=$(crontab -l 2>/dev/null | grep -v -F -e "$SCRIPT_DIR/daily.sh" -e "$SCRIPT_DIR/claude_log.sh" -e "$SCRIPT_DIR/rollup.sh" || true)
+printf '%s\n%s\n%s\n' "$CUR" "$LINE" "$WLINE" | grep -v '^$' | crontab -
 say "daily : $LINE"
 say "weekly: $WLINE"
 
 # ── 6. 동작 확인 ──
 echo "[6/6] Test run (--dry-run, nothing is written)"
-bash "$SCRIPT_DIR/claude_log.sh" --dry-run 2>&1 | head -8
+bash "$SCRIPT_DIR/daily.sh" --dry-run 2>&1 | head -8
 
 cat <<EOF
 
 == Done ==
 Your daily log will be written every day at ${CRON_TIME#* }:$(printf '%02d' "${CRON_TIME%% *}").
 
-  Write today's log now : bash $SCRIPT_DIR/claude_log.sh
-  Preview only          : bash $SCRIPT_DIR/claude_log.sh --dry-run
-  Recover a missed day  : bash $SCRIPT_DIR/claude_log.sh --date YYYY-MM-DD
+  Write today's log now : bash $SCRIPT_DIR/daily.sh
+  Preview only          : bash $SCRIPT_DIR/daily.sh --dry-run
+  Recover a missed day  : bash $SCRIPT_DIR/daily.sh --date YYYY-MM-DD
   Weekly summary        : bash $SCRIPT_DIR/rollup.sh week
 EOF

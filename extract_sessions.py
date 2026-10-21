@@ -8,7 +8,7 @@
   - 실행한 명령의 description (= '어떻게')
   - 세션 마지막 결론 (= '그래서 어떻게 됐나')
 
-사용법: extract_sessions.py <TRACK_REPO> [YYYY-MM-DD] [제외할_디렉터리_이름조각]
+사용법: extract_sessions.py <TRACK_REPO> [YYYY-MM-DD] [제외할_디렉터리_이름조각] [총_글자수_상한]
 """
 import json
 import os
@@ -31,7 +31,7 @@ SKIP_PREFIXES = (
     "[Request interrupted",
 )
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
-SELF_MARK = "[worklog-auto]"   # worklog 가 제 요약 프롬프트에 심는 표식 (claude_log.sh / rollup.sh)
+SELF_MARK = "[worklog-auto]"   # worklog 가 제 요약 프롬프트에 심는 표식 (daily.sh / rollup.sh)
 
 
 def is_real_prompt(text):
@@ -124,6 +124,7 @@ def main():
     repo = sys.argv[1]
     day = sys.argv[2] if len(sys.argv) > 2 else datetime.date.today().isoformat()
     skip = sys.argv[3] if len(sys.argv) > 3 else ""   # 기록에서 뺄 디렉터리 이름 조각
+    budget = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 0   # 0 = 상한 없음
     root = os.path.expanduser("~/.claude/projects")
     if not os.path.isdir(root):
         return
@@ -147,8 +148,9 @@ def main():
                 sessions.append((len(prompts) + len(files), cwd, prompts, files, cmds, conclusion, n))
 
     sessions.sort(reverse=True, key=lambda s: s[0])
-    out = []
+    blocks = []
     for _, cwd, prompts, files, cmds, conclusion, name in sessions[:MAX_SESSIONS]:
+        out = []
         out.append(f"\n#### 세션 {name[:8]} · {cwd or repo} · 지시 {len(prompts)}건")
         if prompts:
             out.append("[지시/질문]")
@@ -171,7 +173,19 @@ def main():
         if conclusion:
             out.append("[세션 마지막 정리]")
             out.append("- " + " ".join(conclusion.split())[:CONCLUSION_CHARS])
-    print("\n".join(out))
+        blocks.append("\n".join(out))
+
+    # 상한은 바이트가 아니라 글자 수로, 세션 경계에서만 자른다.
+    # (예전엔 셸의 head -c 로 잘라 한글이 3배로 깎이고 마지막 세션이 글자 중간에서 끊겼다)
+    # 근거가 많은 세션부터 담고, 남는 세션은 머리줄만 남겨 그런 작업이 있었다는 것은 전한다.
+    used, kept = 0, []
+    for b in blocks:
+        head = b.split("\n", 2)[1]
+        if budget and used + len(b) > budget:
+            b = head + " (예산 초과로 내용 생략)"
+        kept.append(b)
+        used += len(b)
+    print("\n".join(kept))
 
 
 if __name__ == "__main__":

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # claude(헤드리스)가 그날 실제 작업을 상세 서술형으로 일지에 기록한다.
 # "오늘 한 일" 정확도의 두 축:
-#   1) 무엇을 바꿨나 → worklog/.snapshot.git 로 매일 스냅샷을 떠 "어제 대비 diff" 계산
+#   1) 무엇을 바꿨나 → 일지 저장소의 .snapshot.git 로 매일 스냅샷을 떠 "어제 대비 diff" 계산
 #   2) 왜 했나       → 그날 세션 트랜스크립트에서 지시·편집·실행·결론을 추출
-# 설정은 같은 폴더의 worklog.conf 에서 읽는다 (없으면 아래 기본값).
+# 설정은 같은 폴더의 whylog.conf 에서 읽는다 (없으면 아래 기본값).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
-[ -f "${WORKLOG_CONF:-$SCRIPT_DIR/worklog.conf}" ] && . "${WORKLOG_CONF:-$SCRIPT_DIR/worklog.conf}"
+[ -f "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}" ] && . "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}"
 
-# ===== 기본값 (worklog.conf 가 이미 정했으면 그대로 둔다) =====
+# ===== 기본값 (whylog.conf 가 이미 정했으면 그대로 둔다) =====
 : "${TRACK_REPO:=$HOME}"                 # 일지에 기록할 작업 저장소 루트
 : "${WORKLOG_DIR:=$SCRIPT_DIR}"          # 일지 저장소 (이 스크립트가 있는 곳)
 : "${MODEL:=opus}"                       # 상세 요약 모델
@@ -34,7 +34,7 @@ if [ -z "${CLAUDE_BIN:-}" ]; then
   [ -z "$CLAUDE_BIN" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE_BIN="$HOME/.local/bin/claude"
 fi
 if [ ! -x "${CLAUDE_BIN:-}" ]; then
-  echo "[error] claude 실행 파일을 찾지 못했습니다. worklog.conf 의 CLAUDE_BIN 을 설정하세요." >&2
+  echo "[error] claude executable not found. Set CLAUDE_BIN in whylog.conf." >&2
   exit 1
 fi
 # ================
@@ -42,12 +42,14 @@ fi
 # --dry-run          : 일지·스냅샷·git 을 전혀 건드리지 않고 결과만 출력 (설정 검증용)
 # --date YYYY-MM-DD  : 과거 날짜 백필. 그날 스냅샷 커밋과 직전 스냅샷 커밋의 차이를 근거로 재생성한다
 #                      (cron 이 서버 다운 등으로 걸렀을 때 복구용)
-DRY_RUN=0; TARGET_DATE=""
+# --init-snapshot    : 스냅샷 저장소만 만들고 끝낸다 (install.sh 용, 모델 호출 없음)
+DRY_RUN=0; TARGET_DATE=""; INIT_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --date)    shift; TARGET_DATE="${1:-}" ;;
-    *) echo "사용법: $0 [--dry-run] [--date YYYY-MM-DD]" >&2; exit 1 ;;
+    --init-snapshot) INIT_ONLY=1; DRY_RUN=1 ;;
+    *) echo "usage: $0 [--dry-run] [--date YYYY-MM-DD]" >&2; exit 1 ;;
   esac
   shift
 done
@@ -68,9 +70,10 @@ if [ "$DRY_RUN" -eq 0 ]; then
     fi
   fi
 
-  # 오늘 이미 기록됐으면 건너뜀 (cron 중복 방지). 표식은 언어와 무관하게 "## 🤖 " 머리글
+  # 오늘 이미 기록됐으면 건너뜀 (cron 중복 방지). 표식은 언어와 무관하게 성공 머리글 "## 🤖 "
+  # (실패 머리글은 "## ⚠️ " 라서 다음 실행이 다시 시도한다)
   if grep -q "^## 🤖 " "$LOGFILE" 2>/dev/null; then
-    echo "[$DATE] 이미 기록됨 → 건너뜀"; exit 0
+    echo "[$DATE] already written → skip"; exit 0
   fi
 fi
 
@@ -84,8 +87,8 @@ if [ "$DRY_RUN" -eq 0 ] && [ -z "$TARGET_DATE" ] && [ -n "$PRIOR_LOG" ]; then
     D=$(date -d "$back days ago" +%Y-%m-%d 2>/dev/null) || continue
     F="$WORKLOG_DIR/${D%-*}/$D.md"
     if ! grep -q "^## 🤖 " "$F" 2>/dev/null; then
-      echo "[$DATE] 결손 감지: $D → 백필 시도"
-      bash "$0" --date "$D" || echo "[$DATE] $D 백필 실패 — 건너뜀"
+      echo "[$DATE] missing log for $D → backfilling"
+      bash "$0" --date "$D" || echo "[$DATE] backfill of $D failed — skipped"
     fi
   done
 fi
@@ -94,7 +97,6 @@ fi
 if [ ! -d "$SNAP" ]; then
   git --git-dir="$SNAP" init -q
   cat > "$SNAP/info/exclude" <<'EOF'
-/worklog/
 /wandb/
 node_modules/
 .next/
@@ -122,7 +124,10 @@ node_modules/
 *.db
 *.sqlite
 EOF
+  # 일지 저장소가 작업 폴더 안에 있으면 스냅샷에서 뺀다 — 안 빼면 어제 일지가 오늘의 '코드 변경'으로 잡힌다
+  case "$WORKLOG_DIR" in "$TRACK_REPO"/*) echo "/${WORKLOG_DIR#"$TRACK_REPO"/}/" >> "$SNAP/info/exclude" ;; esac
 fi
+[ "$INIT_ONLY" -eq 1 ] && exit 0
 
 # 스냅샷 명령 헬퍼 (-C 로 pathspec을 저장소 루트 기준으로 해석)
 snap() { git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"; }
@@ -131,7 +136,11 @@ snap() { git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"; 
 # 평시: 작업 트리를 스테이징해 직전 스냅샷 커밋과 비교
 # 백필: 그날 스냅샷 커밋 ↔ 직전 스냅샷 커밋 을 비교 (작업 트리는 이미 그날 상태가 아니므로 못 씀)
 HAD_PREV=$(snap rev-parse -q --verify HEAD || true)
-if [ -n "$TARGET_DATE" ]; then
+# 같은 날 다시 돌리는 경우(앞선 요약 실패 후 재실행 등): 오늘 스냅샷이 이미 커밋돼 있어
+# 작업 트리 대비 diff 는 비어 버린다 → 백필과 같은 방식으로 그날 스냅샷 커밋끼리 비교한다
+TODAY_SNAP=""
+[ -z "$TARGET_DATE" ] && TODAY_SNAP=$(snap log --format='%H %s' 2>/dev/null | awk -v d="$DATE" '$2=="snapshot" && $3==d {print $1; exit}')
+if [ -n "$TARGET_DATE" ] || [ -n "$TODAY_SNAP" ]; then
   END_C=$(snap log --format='%H %s' 2>/dev/null | awk -v d="$DATE" '$2=="snapshot" && $3==d {print $1; exit}')
   # 직전 '스냅샷' 커밋을 고른다 — housekeeping 등 다른 커밋을 base 로 잡으면 무관한 변경이 섞인다
   BASE_C=""
@@ -142,7 +151,7 @@ if [ -n "$TARGET_DATE" ]; then
     # 그날 스크립트가 아예 안 돌아 스냅샷이 없는 경우 — 결손 복구가 필요한 바로 그 상황이다.
     # 코드 diff 는 포기하고 세션 트랜스크립트만으로 작성한다.
     DIFF_RANGE=""
-    echo "[warn] $DATE 스냅샷 커밋이 없어 코드 diff 없이 세션 기록만으로 작성합니다" >&2
+    echo "[warn] no snapshot commit for $DATE — writing from session evidence only, without a code diff" >&2
   fi
 else
   # 패턴별로 따로 add 한다: git add 는 pathspec 하나라도 매칭 0이면 fatal 로 전체를 취소하므로,
@@ -169,8 +178,8 @@ if [ -n "$HAD_PREV" ] && [ -n "$DIFF_RANGE" ]; then
   )
 fi
 
-if [ -n "$TARGET_DATE" ]; then
-  :                          # 백필은 스냅샷을 갱신하지 않는다
+if [ -n "$TARGET_DATE" ] || [ -n "$TODAY_SNAP" ]; then
+  :                          # 백필·재실행은 스냅샷을 갱신하지 않는다
 elif [ "$DRY_RUN" -eq 1 ]; then
   snap reset -q              # 드라이런은 스냅샷 이력을 건드리지 않는다
 else
@@ -178,7 +187,7 @@ else
 fi
 
 # ── (2) 그날의 세션 활동 (=의도 '왜' + 실제 행위 '무엇을') : 세션 트랜스크립트에서 이벤트 추출 ──
-SESSIONS=$(python3 "$SCRIPT_DIR/extract_sessions.py" "$TRACK_REPO" "$DATE" "$SKIP_DIR" 2>/dev/null | head -c "$SESS_BUDGET")
+SESSIONS=$(python3 "$SCRIPT_DIR/extract_sessions.py" "$TRACK_REPO" "$DATE" "$SKIP_DIR" "$SESS_BUDGET" 2>/dev/null)
 
 # ── (2-보조) history.jsonl — 트랜스크립트가 없거나 형식이 바뀐 경우의 폴백 ──
 # project 는 세션의 cwd 이므로 하위 디렉터리까지 잡으려면 prefix 로 비교해야 한다.
@@ -226,7 +235,7 @@ done
 # mtime 은 '지금'을 기준으로만 의미가 있다 — 백필에서는 오늘 파일이 과거 날짜에 섞이므로 쓰지 않는다
 MTIME_FILES=""
 [ -z "$TARGET_DATE" ] && MTIME_FILES=$(cd "$TRACK_REPO" && find . -type f \( -name '*.py' -o -name '*.md' -o -name '*.sh' -o -name '*.ipynb' -o -name '*.tex' -o -name '*.R' \) \
-  -mmin -960 -not -path './.git/*' -not -path './worklog/*' \
+  -mmin -960 -not -path './.git/*' -not -path "./${WORKLOG_DIR#"$TRACK_REPO"/}/*" \
   -not -path '*/node_modules/*' -not -path '*/.next/*' \
   -not -path './.antigravity-ide-server/*' -not -path './.antigravity-server/*' \
   -not -path './.warp/*' -not -path './.vscode*' 2>/dev/null | head -80)
@@ -254,7 +263,7 @@ fi
 # ── 프롬프트 구성 ──
 PROMPT="[worklog-auto] 당신은 한 연구자의 일일 작업 일지를 대신 정리하는 조수입니다. ${CHANGE_GUIDE}
 
-'왜(의도)·기대효과·계기(어떤 오류·문제)'는 **'그날의 세션 기록'을 최우선 근거**로 삼고, 커밋 메시지·코드 주석·계획노트(implementation_plan.md 등)로 보완하세요. 세션 기록의 [편집한 파일]과 코드 diff 를 연결해, 어떤 지시가 어떤 변경으로 이어졌는지 짝지어 서술하세요. 근거 없이 diff 모양만으로 추론한 부분은 '(추정)'을 붙이고, 근거가 전혀 없으면 왜/기대효과는 비워 두세요(지어내지 말 것).
+'왜(의도)·기대효과·계기(어떤 오류·문제)'는 **'그날의 세션 기록'을 최우선 근거**로 삼고, 커밋 메시지·코드 주석·계획 노트로 보완하세요. 세션 기록의 [편집한 파일]과 코드 diff 를 연결해, 어떤 지시가 어떤 변경으로 이어졌는지 짝지어 서술하세요. 근거 없이 diff 모양만으로 추론한 부분은 '(추정)'을 붙이고, 근거가 전혀 없으면 왜/기대효과는 비워 두세요(지어내지 말 것).
 
 출력 형식(반드시 이 순서):
 1. \`**TL;DR**: \` 한 줄 — 오늘의 핵심 성과.
@@ -277,19 +286,24 @@ ${COMMITS:-없음}"
 [Output language] Write the entire log in English. Use these labels instead of the Korean ones above: **TL;DR**, **Today's flow**, and What / Why / Effect / Trigger. Group minor changes under 'Other'."
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "===== [DRY-RUN] 근거 규모 ====="
-  echo "프롬프트 총 ${#PROMPT}자 (diff 본문 ${#DIFF_BODY}자 / 예산 ${DIFF_BUDGET}자)"
-  echo "변경 파일: $(printf '%s' "$DIFF_STAT" | tail -1)"
-  echo "diff 본문 수록 파일: $(printf '%s' "$DIFF_BODY" | LC_ALL=C grep -ac '^===== ')개"
-  echo "세션 근거: ${#SESSIONS}자 / $(printf '%s' "$SESSIONS" | LC_ALL=C grep -ac '^#### 세션')개 세션 (폴백 history.jsonl: $(printf '%s' "${PROMPTS:-}" | LC_ALL=C grep -ac '^- ')건)"
+  echo "===== [DRY-RUN] evidence ====="
+  echo "prompt: ${#PROMPT} chars (diff body ${#DIFF_BODY} / budget ${DIFF_BUDGET})"
+  echo "changed files: $(printf '%s' "$DIFF_STAT" | tail -1)"
+  echo "files with diff body: $(printf '%s' "$DIFF_BODY" | LC_ALL=C grep -ac '^===== ')"
+  echo "session evidence: ${#SESSIONS} chars / $(printf '%s' "$SESSIONS" | LC_ALL=C grep -ac '^#### 세션') sessions (history.jsonl fallback: $(printf '%s' "${PROMPTS:-}" | LC_ALL=C grep -ac '^- ') prompts)"
   echo
 fi
 
-NARRATIVE=$(timeout "$TIMEOUT_SEC" "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+# 근거가 하나도 없는 날(휴일 등)은 모델을 부르지 않는다 — 부르면 "기록 없음"을 길게 써 사용량만 쓴다
+if [ -z "$SESSIONS$PROMPTS$DIFF_STAT$COMMITS$MTIME_FILES" ]; then
+  [ "$LANGUAGE" = "en" ] && NARRATIVE="**TL;DR**: No recorded activity." || NARRATIVE="**TL;DR**: 기록된 작업 없음."
+else
+  NARRATIVE=$(timeout "$TIMEOUT_SEC" "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
-  echo "===== [DRY-RUN] 생성 결과 (파일 미기록) ====="
-  echo "${NARRATIVE:-(생성 실패)}"
+  echo "===== [DRY-RUN] output (nothing written) ====="
+  echo "${NARRATIVE:-(generation failed)}"
   exit 0
 fi
 
@@ -300,7 +314,8 @@ fi
     echo ""
     echo "$NARRATIVE"
   else
-    [ "$LANGUAGE" = "en" ] && echo "## 🤖 Claude summary failed → files modified today ($TIME)" || echo "## 🤖 Claude 자동 요약 실패 → 오늘 수정된 파일 ($TIME)"
+    # 실패 머리글은 🤖 가 아니다 — 다음 실행(결손 가드)이 이 날을 다시 시도하게 한다
+    [ "$LANGUAGE" = "en" ] && echo "## ⚠️ Claude summary failed → files modified today ($TIME)" || echo "## ⚠️ Claude 자동 요약 실패 → 오늘 수정된 파일 ($TIME)"
     echo '```'
     echo "${MTIME_FILES:-없음}"
     echo '```'
@@ -309,15 +324,20 @@ fi
 } >> "$LOGFILE"
 
 # INDEX 갱신 — 모델 호출이 없어 비용이 들지 않으므로 매일 돌려 최신 상태를 유지한다
-bash "$SCRIPT_DIR/rollup.sh" index >/dev/null 2>&1 || echo "[warn] INDEX 갱신 실패"
+bash "$SCRIPT_DIR/rollup.sh" index >/dev/null 2>&1 || echo "[warn] INDEX update failed"
 
-# worklog 저장소에 커밋 & push
-cd "$WORKLOG_DIR"
+# 일지 저장소에 커밋 & push
+cd "$WORKLOG_DIR" || exit 1
 git add -A
 if ! git diff --cached --quiet; then
-  git commit -q -m "worklog: $DATE 자동 상세 기록"
+  git commit -q -m "worklog: $DATE"
   if git remote get-url origin >/dev/null 2>&1; then
-    git push -q origin main 2>/dev/null || echo "[warn] push 실패"
+    git push -q origin main 2>/dev/null || echo "[warn] push failed"
   fi
 fi
-echo "[$DATE $TIME] 자동 상세 일지 기록 완료: $LOGFILE"
+if [ -n "$NARRATIVE" ]; then
+  echo "[$DATE $TIME] log written: $LOGFILE"
+else
+  echo "[$DATE $TIME] summary failed — the next run will retry: $LOGFILE" >&2
+  exit 1
+fi
