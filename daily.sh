@@ -82,7 +82,10 @@ fi
 #  Children run with --date, so this does not recurse.)
 # Right after installation there are no past logs, so backfilling would only write 3 empty days.
 # Today's file was just created above, so it is left out of that check.
-PRIOR_LOG=$(ls "$WORKLOG_DIR"/20*/20*.md 2>/dev/null | grep -v "/$DATE\.md$" | head -1)
+PRIOR_LOG=""
+for f in "$WORKLOG_DIR"/20*/20*.md; do
+  [ -e "$f" ] && [ "$f" != "$LOGFILE" ] && { PRIOR_LOG="$f"; break; }
+done
 if [ "$DRY_RUN" -eq 0 ] && [ -z "$TARGET_DATE" ] && [ -n "$PRIOR_LOG" ]; then
   for back in 3 2 1; do
     D=$(python3 -c 'import datetime as dt,sys; print(dt.date.today()-dt.timedelta(days=int(sys.argv[1])))' "$back")
