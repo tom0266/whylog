@@ -70,6 +70,7 @@ To change the run time: `CRON_TIME="30 19" bash install.sh` (minute hour; the de
 | `DIFF_BUDGET` etc. | 60000 / 6000 / 40 | Caps on how much code diff goes into the prompt |
 | `SESS_BUDGET` | 30000 | Cap on the session evidence |
 | `SKIP_DIR` | (empty) | Sessions whose path contains this string are not logged |
+| `EXCLUDE` | (empty) | Extra folders to keep out of the code diff, as space-separated gitignore patterns (e.g. `"/datasets/ /runs/*/outputs/"`) |
 
 ## How it knows what you did
 
@@ -116,7 +117,7 @@ whylog/
 
 - **Keep your log repo private.** It records what you did and why: unpublished results, failed attempts and the reasoning behind decisions. That honesty is what makes the log useful, and making it public invites self-censorship. To share, keep the original private and export only the weekly summaries.
 - **Code diffs and your prompts are sent to Claude** when the summary is generated. If your organization restricts sending code outside, limit `TRACK_REPO` accordingly.
-- To exclude a folder from tracking, add it to `.snapshot.git/info/exclude`. Package and environment folders (conda, venv, `site-packages`) and editor settings are excluded by default, so installing a library never floods the day's diff.
+- To exclude a folder from tracking, add it to `EXCLUDE` in `whylog.conf` (kept with your config) or directly to `.snapshot.git/info/exclude`. Package and environment folders (conda, venv, `site-packages`) and editor settings are excluded by default, so installing a library never floods the day's diff.
 - If `.claude/` is in your work folder's `.gitignore`, work on skills and agents will not appear in the code diff. It still shows up in the session evidence.
 - Sessions after the nightly run are not in that day's log. Their code changes appear in the next day's diff. Move `CRON_TIME` later if you often work late.
 

@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${SESS_BUDGET:=30000}"                # cap on session evidence (chars)
 : "${TIMEOUT_SEC:=600}"
 : "${SKIP_DIR:=}"                        # skip sessions whose path contains this (empty = none)
+: "${EXCLUDE:=}"                         # extra snapshot excludes, space-separated gitignore patterns
 : "${LANGUAGE:=ko}"                      # log language: ko | en
 SNAP="$WORKLOG_DIR/.snapshot.git"        # code/docs-only snapshot repo (for the daily diff)
 if [ "$LANGUAGE" = "en" ]; then
@@ -150,6 +151,13 @@ venv/
 # Exclude the log repo if it sits inside the work folder; otherwise yesterday's log shows up as today's 'code change'
 case "$WORKLOG_DIR" in "$TRACK_REPO"/*) ENV_EXCLUDES="$ENV_EXCLUDES
 /${WORKLOG_DIR#"$TRACK_REPO"/}/" ;; esac
+# Personal excludes from whylog.conf live in the (versioned) config, so they survive a move to another machine.
+# read -a splits on spaces without glob-expanding patterns like *.csv.
+if [ -n "$EXCLUDE" ]; then
+  read -r -a extra <<< "$EXCLUDE"
+  for pat in "${extra[@]}"; do ENV_EXCLUDES="$ENV_EXCLUDES
+$pat"; done
+fi
 while IFS= read -r pat; do
   grep -qxF -- "$pat" "$SNAP/info/exclude" || echo "$pat" >> "$SNAP/info/exclude"
 done <<< "$ENV_EXCLUDES"
