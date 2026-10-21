@@ -84,7 +84,7 @@ fi
 PRIOR_LOG=$(ls "$WORKLOG_DIR"/20*/20*.md 2>/dev/null | grep -v "/$DATE\.md$" | head -1)
 if [ "$DRY_RUN" -eq 0 ] && [ -z "$TARGET_DATE" ] && [ -n "$PRIOR_LOG" ]; then
   for back in 3 2 1; do
-    D=$(date -d "$back days ago" +%Y-%m-%d 2>/dev/null) || continue
+    D=$(python3 -c 'import datetime as dt,sys; print(dt.date.today()-dt.timedelta(days=int(sys.argv[1])))' "$back")
     F="$WORKLOG_DIR/${D%-*}/$D.md"
     if ! grep -q "^## 🤖 " "$F" 2>/dev/null; then
       echo "[$DATE] missing log for $D → backfilling"
@@ -298,7 +298,8 @@ fi
 if [ -z "$SESSIONS$PROMPTS$DIFF_STAT$COMMITS$MTIME_FILES" ]; then
   [ "$LANGUAGE" = "en" ] && NARRATIVE="**TL;DR**: No recorded activity." || NARRATIVE="**TL;DR**: 기록된 작업 없음."
 else
-  NARRATIVE=$(timeout "$TIMEOUT_SEC" "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+  TO=$(command -v timeout || command -v gtimeout || true)   # macOS 에는 timeout 이 없다
+  NARRATIVE=$(${TO:+"$TO" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then

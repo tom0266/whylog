@@ -42,7 +42,7 @@
 
 ## 5분 설치
 
-필요한 것: Linux, [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, 로그인 상태), `git`, `python3`, `cron`. 선택: `gh` (비공개 GitHub 저장소를 대신 만들어 줌). macOS는 아직 지원하지 않습니다 (GNU `date -d`, `timeout` 사용).
+필요한 것: Linux 또는 macOS, [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, 로그인 상태), `git`, `python3`, `cron`. 선택: `gh` (비공개 GitHub 저장소를 대신 만들어 줌). macOS에서 작업 폴더가 Documents·Desktop 아래에 있으면 cron에 "전체 디스크 접근 권한"이 필요할 수 있습니다. 매일 실사용 중인 환경은 Linux이고, macOS는 아직 실기 테스트 전입니다.
 
 ```bash
 git clone https://github.com/tom0266/whylog ~/whylog

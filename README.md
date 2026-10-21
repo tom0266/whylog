@@ -43,7 +43,7 @@ More samples in [`examples/`](examples/): a full daily log, a weekly summary and
 
 ## Quick start
 
-Requirements: Linux, [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, logged in), `git`, `python3`, `cron`. Optional: `gh`, to create the private GitHub repo for you. macOS is not supported yet (the scripts use GNU `date -d` and `timeout`).
+Requirements: Linux or macOS, [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, logged in), `git`, `python3`, `cron`. Optional: `gh`, to create the private GitHub repo for you. On macOS, cron may need Full Disk Access if your work folder is under Documents or Desktop. Linux is what it runs on daily; macOS has not been tested on a real machine yet.
 
 ```bash
 git clone https://github.com/tom0266/whylog ~/whylog

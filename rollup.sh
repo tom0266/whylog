@@ -73,10 +73,16 @@ fi
 # ── 기간 결정 ──
 if [ "$MODE" = "week" ]; then
   REF="${2:-$(date +%Y-%m-%d)}"
-  DOW=$(date -d "$REF" +%u)                       # 1=월 … 7=일
-  START=$(date -d "$REF -$((DOW - 1)) days" +%Y-%m-%d)
-  END=$(date -d "$START +6 days" +%Y-%m-%d)
-  LABEL="$(date -d "$START" +%Y)-W$(date -d "$START" +%V)"
+  # 월~일 주와 ISO 주 번호. 연도는 ISO 연도를 써야 연말 주가 다음 해 W01 과 섞이지 않는다
+  # (date 의 %Y-W%V 는 2024-12-30 주를 2024-W01 로 적었다). GNU date -d 대신 python3 로 계산한다.
+  read -r START END LABEL < <(python3 - "$REF" <<'PY'
+import datetime as dt, sys
+r = dt.date.fromisoformat(sys.argv[1])
+s = r - dt.timedelta(days=r.weekday())
+y, w, _ = s.isocalendar()
+print(s, s + dt.timedelta(days=6), f"{y}-W{w:02d}")
+PY
+)
   OUTFILE="$WORKLOG_DIR/${START%-*}/weekly-$LABEL.md"
   TITLE="주간 요약 $LABEL ($START ~ $END)"
   [ "$LANGUAGE" = "en" ] && TITLE="Weekly summary $LABEL ($START ~ $END)"
@@ -84,7 +90,7 @@ if [ "$MODE" = "week" ]; then
 elif [ "$MODE" = "month" ]; then
   M="${2:-$(date +%Y-%m)}"
   START="$M-01"
-  END=$(date -d "$START +1 month -1 day" +%Y-%m-%d)
+  END=$(python3 -c 'import calendar,sys; y,m=map(int,sys.argv[1].split("-")); print(f"{y:04d}-{m:02d}-{calendar.monthrange(y,m)[1]:02d}")' "$M")
   LABEL="$M"
   OUTFILE="$WORKLOG_DIR/$M/SUMMARY.md"
   TITLE="월간 요약 $M"
@@ -96,8 +102,8 @@ fi
 
 # ── 해당 기간 일지 수집 ──
 BODY=""; N=0
-D="$START"
-while [ "$D" != "$(date -d "$END +1 day" +%Y-%m-%d)" ]; do
+DAYS=$(python3 -c 'import datetime as dt,sys; a,b=(dt.date.fromisoformat(x) for x in sys.argv[1:]); print(*(a+dt.timedelta(days=i) for i in range((b-a).days+1)))' "$START" "$END")
+for D in $DAYS; do
   F="$WORKLOG_DIR/${D%-*}/$D.md"
   if [ -f "$F" ]; then
     BODY="$BODY
@@ -106,7 +112,6 @@ while [ "$D" != "$(date -d "$END +1 day" +%Y-%m-%d)" ]; do
 $(cat "$F")"
     N=$((N + 1))
   fi
-  D=$(date -d "$D +1 day" +%Y-%m-%d)
 done
 
 if [ "$N" -eq 0 ]; then
@@ -129,7 +134,8 @@ ${BODY}"
 [Output language] Write the summary in English. Use these labels: **Key results**, **Progress by project**, **Carried over**."
 
 echo "[$TITLE] summarizing ${N} daily logs…"
-OUT=$(timeout "$TIMEOUT_SEC" "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+TO=$(command -v timeout || command -v gtimeout || true)   # macOS 에는 timeout 이 없다
+OUT=$(${TO:+"$TO" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
 [ -z "$OUT" ] && { echo "[error] summary generation failed"; exit 1; }
 
 mkdir -p "$(dirname "$OUTFILE")"
