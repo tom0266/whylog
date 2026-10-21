@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# 일일 일지를 주간/월간으로 굴리고 INDEX.md 를 갱신한다.
-# 일일 기록은 "그날 무엇을 했나"의 원본이고, 롤업은 "그래서 이 기간에 뭐가 진행됐나"를 보는 단위다.
+# Rolls daily logs up into weekly/monthly summaries and refreshes INDEX.md.
+# Daily logs are the record of "what I did that day"; rollups answer "so what moved forward in this period".
 #
-#   rollup.sh week  [YYYY-MM-DD]   그 날짜가 속한 주(월~일) 요약  → YYYY-MM/weekly-YYYY-Www.md
-#   rollup.sh month [YYYY-MM]      그 달 요약                    → YYYY-MM/SUMMARY.md
-#   rollup.sh index                INDEX.md 재생성 (모델 호출 없음)
+#   rollup.sh week  [YYYY-MM-DD]   summary of that date's week (Mon–Sun) → YYYY-MM/weekly-YYYY-Www.md
+#   rollup.sh month [YYYY-MM]      summary of that month                → YYYY-MM/SUMMARY.md
+#   rollup.sh index                rebuild INDEX.md (no model call)
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +26,7 @@ fi
 
 MODE="${1:-index}"
 
-# ── INDEX.md: 각 일지의 TL;DR 한 줄을 모아 전체 흐름을 한 화면에 ──
+# ── INDEX.md: every log's TL;DR line, so the whole history fits on one screen ──
 make_index() {
   python3 - "$WORKLOG_DIR" "$LANGUAGE" <<'PY'
 import os, re, sys
@@ -70,11 +70,11 @@ if [ "$MODE" = "index" ]; then
   exit 0
 fi
 
-# ── 기간 결정 ──
+# ── Pick the period ──
 if [ "$MODE" = "week" ]; then
   REF="${2:-$(date +%Y-%m-%d)}"
-  # 월~일 주와 ISO 주 번호. 연도는 ISO 연도를 써야 연말 주가 다음 해 W01 과 섞이지 않는다
-  # (date 의 %Y-W%V 는 2024-12-30 주를 2024-W01 로 적었다). GNU date -d 대신 python3 로 계산한다.
+  # Mon–Sun week and ISO week number. Use the ISO year, or a year-end week collides with W01
+  # (date's %Y-W%V labelled the week of 2024-12-30 as 2024-W01). python3 instead of GNU date -d.
   read -r START END LABEL < <(python3 - "$REF" <<'PY'
 import datetime as dt, sys
 r = dt.date.fromisoformat(sys.argv[1])
@@ -100,7 +100,7 @@ else
   echo "usage: $0 {week [YYYY-MM-DD] | month [YYYY-MM] | index}" >&2; exit 1
 fi
 
-# ── 해당 기간 일지 수집 ──
+# ── Collect the period's daily logs ──
 BODY=""; N=0
 DAYS=$(python3 -c 'import datetime as dt,sys; a,b=(dt.date.fromisoformat(x) for x in sys.argv[1:]); print(*(a+dt.timedelta(days=i) for i in range((b-a).days+1)))' "$START" "$END")
 for D in $DAYS; do
@@ -134,7 +134,7 @@ ${BODY}"
 [Output language] Write the summary in English. Use these labels: **Key results**, **Progress by project**, **Carried over**."
 
 echo "[$TITLE] summarizing ${N} daily logs…"
-TO=$(command -v timeout || command -v gtimeout || true)   # macOS 에는 timeout 이 없다
+TO=$(command -v timeout || command -v gtimeout || true)   # macOS has no timeout by default
 OUT=$(${TO:+"$TO" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
 [ -z "$OUT" ] && { echo "[error] summary generation failed"; exit 1; }
 

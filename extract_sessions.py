@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""그날의 Claude Code 세션 트랜스크립트에서 '일지 근거'만 뽑아낸다.
+"""Extract only the log evidence from a day's Claude Code session transcripts.
 
-트랜스크립트(~/.claude/projects/**/*.jsonl)는 세션 하나가 40MB 를 넘기도 하므로
-원문을 프롬프트에 넣지 않는다. 여기서는 이벤트만 추출한다:
-  - 사용자가 내린 지시/질문 (= '왜'의 최우선 근거)
-  - 편집·생성한 파일 (= '무엇을')
-  - 실행한 명령의 description (= '어떻게')
-  - 세션 마지막 결론 (= '그래서 어떻게 됐나')
+A single transcript (~/.claude/projects/**/*.jsonl) can exceed 40 MB, so the raw text never
+goes into the prompt. Only these events are extracted:
+  - the user's instructions/questions (= the main evidence for 'why')
+  - files edited or created (= 'what')
+  - descriptions of commands run (= 'how')
+  - the session's final message (= 'how it ended')
 
-사용법: extract_sessions.py <TRACK_REPO> [YYYY-MM-DD] [제외할_디렉터리_이름조각] [총_글자수_상한]
+Usage: extract_sessions.py <TRACK_REPO> [YYYY-MM-DD] [SKIP_DIR] [CHAR_BUDGET]
 """
 import json
 import os
@@ -16,7 +16,7 @@ import sys
 import datetime
 from collections import Counter
 
-# 세션당 상한 — 프롬프트 예산을 지키기 위한 값
+# Per-session caps, to keep the prompt within budget
 MAX_SESSIONS = 12
 MAX_PROMPTS = 25
 MAX_FILES = 15
@@ -25,13 +25,13 @@ PROMPT_CHARS = 400
 CONCLUSION_CHARS = 400
 
 SKIP_PREFIXES = (
-    "<",                                  # system-reminder, command-name 등 하네스 삽입 블록
+    "<",                                  # blocks injected by the harness (system-reminder, command-name, ...)
     "Caveat:",
-    "This session is being continued",    # 컨텍스트 압축 요약
+    "This session is being continued",    # context-compaction summary
     "[Request interrupted",
 )
 EDIT_TOOLS = {"Edit", "Write", "NotebookEdit"}
-SELF_MARK = "[worklog-auto]"   # worklog 가 제 요약 프롬프트에 심는 표식 (daily.sh / rollup.sh)
+SELF_MARK = "[worklog-auto]"   # marker whylog puts in its own summary prompts (daily.sh / rollup.sh)
 
 
 def is_real_prompt(text):
@@ -40,13 +40,13 @@ def is_real_prompt(text):
         return False
     if t.startswith(SKIP_PREFIXES):
         return False
-    if t.startswith("/"):                 # 슬래시 커맨드는 의도를 담지 않음
+    if t.startswith("/"):                 # slash commands carry no intent
         return False
     return True
 
 
 def user_text(msg):
-    """user 메시지에서 사람이 실제로 친 텍스트만 꺼낸다 (tool_result 는 제외)."""
+    """Return only the text a person typed in a user message (tool_result excluded)."""
     c = msg.get("content")
     if isinstance(c, str):
         return c
@@ -58,8 +58,8 @@ def user_text(msg):
 
 
 def local_date(ts):
-    """트랜스크립트 timestamp 는 UTC ISO('...Z') 이고 우리는 로컬(KST) 날짜로 일지를 쓴다.
-    문자열 비교로 두면 로컬 00~09시 작업이 전날 UTC 로 밀려 통째로 누락된다."""
+    """Transcript timestamps are UTC ISO ('...Z'), but logs are written per local date.
+    Comparing the strings directly would push early-morning local work into the previous UTC day."""
     try:
         return datetime.datetime.fromisoformat(
             ts.replace("Z", "+00:00")).astimezone().date().isoformat()
@@ -68,7 +68,7 @@ def local_date(ts):
 
 
 def scan(path, day, repo, skip=""):
-    """트랜스크립트 하나에서 대상 날짜(로컬 기준)의 이벤트를 뽑는다."""
+    """Extract the target (local) date's events from one transcript."""
     prompts, files, cmds, conclusion = [], Counter(), [], ""
     cwd = ""
     for line in open(path, errors="replace"):
@@ -87,7 +87,7 @@ def scan(path, day, repo, skip=""):
         if not c.startswith(repo) or (skip and skip in c):
             continue
         cwd = cwd or c
-        if o.get("isSidechain"):          # 서브에이전트 내부 대화는 의도가 아니다
+        if o.get("isSidechain"):          # subagent conversations are not user intent
             continue
 
         if o.get("type") == "user":
@@ -112,9 +112,9 @@ def scan(path, day, repo, skip=""):
                     elif name == "Bash" and inp.get("description"):
                         cmds.append(inp["description"])
                 elif b.get("type") == "text" and b.get("text", "").strip():
-                    conclusion = b["text"]      # 마지막 것이 남는다
-    # worklog 자신의 헤드리스 실행도 트랜스크립트를 남긴다. 그대로 두면 백필 시
-    # "일지를 정리했다"가 그날의 작업으로 둔갑하므로 세션 통째로 제외한다.
+                    conclusion = b["text"]      # the last one wins
+    # whylog's own headless runs leave transcripts too. Left in, a backfill would report
+    # "wrote the log" as that day's work, so drop such sessions entirely.
     if any(SELF_MARK in p for p in prompts):
         return cwd, [], Counter(), [], ""
     return cwd, prompts, files, cmds, conclusion
@@ -123,13 +123,13 @@ def scan(path, day, repo, skip=""):
 def main():
     repo = sys.argv[1]
     day = sys.argv[2] if len(sys.argv) > 2 else datetime.date.today().isoformat()
-    skip = sys.argv[3] if len(sys.argv) > 3 else ""   # 기록에서 뺄 디렉터리 이름 조각
-    budget = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 0   # 0 = 상한 없음
+    skip = sys.argv[3] if len(sys.argv) > 3 else ""   # skip paths containing this
+    budget = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 0   # 0 = no cap
     root = os.path.expanduser("~/.claude/projects")
     if not os.path.isdir(root):
         return
 
-    # 대상 날짜(로컬 00:00) 이후에 수정된 파일만 본다 — 그 전에 끝난 세션은 그날 기록을 가질 수 없다
+    # Only files modified since the target date's local midnight — sessions that ended earlier can't have that day's events
     cutoff = datetime.datetime.fromisoformat(day + "T00:00:00").timestamp()
 
     sessions = []
@@ -175,9 +175,9 @@ def main():
             out.append("- " + " ".join(conclusion.split())[:CONCLUSION_CHARS])
         blocks.append("\n".join(out))
 
-    # 상한은 바이트가 아니라 글자 수로, 세션 경계에서만 자른다.
-    # (예전엔 셸의 head -c 로 잘라 한글이 3배로 깎이고 마지막 세션이 글자 중간에서 끊겼다)
-    # 근거가 많은 세션부터 담고, 남는 세션은 머리줄만 남겨 그런 작업이 있었다는 것은 전한다.
+    # The budget counts characters, not bytes, and cuts only at session boundaries.
+    # (A shell head -c used to cut by bytes — a third of the budget for Korean — mid-character.)
+    # Sessions with the most evidence go first; the rest keep their header line so they still show up.
     used, kept = 0, []
     for b in blocks:
         head = b.split("\n", 2)[1]
