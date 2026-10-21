@@ -1,10 +1,10 @@
-# claude-worklog
+# whylog
 
 **English** | [한국어](README.ko.md)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Shell](https://img.shields.io/badge/bash-%2B%20python3-4EAA25)
-![Claude Code](https://img.shields.io/badge/Claude%20Code-headless-D97757)
+![Requires Claude Code](https://img.shields.io/badge/requires-Claude%20Code-555)
 
 **A daily research log that writes itself from your Claude Code sessions and code diffs.**
 
@@ -42,7 +42,7 @@ validation. Fixed the split, then re-ran the baseline.
 Requirements: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, logged in), `git`, `python3`, `cron`. Optional: `gh`, to create the private GitHub repo for you.
 
 ```bash
-git clone https://github.com/tom0266/claude-worklog ~/worklog
+git clone https://github.com/tom0266/whylog ~/worklog
 cd ~/worklog
 vi worklog.conf        # usually fine as is (see below)
 bash install.sh
@@ -126,3 +126,5 @@ Then delete the folder if you no longer need the logs.
 ## License
 
 [MIT](LICENSE)
+
+Unofficial community project. Not affiliated with or endorsed by Anthropic. Claude and Claude Code are trademarks of Anthropic.

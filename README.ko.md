@@ -1,10 +1,10 @@
-# claude-worklog
+# whylog
 
 [English](README.md) | **한국어**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Shell](https://img.shields.io/badge/bash-%2B%20python3-4EAA25)
-![Claude Code](https://img.shields.io/badge/Claude%20Code-headless-D97757)
+![Requires Claude Code](https://img.shields.io/badge/requires-Claude%20Code-555)
 
 **Claude Code 세션 기록과 코드 diff로 매일 연구 일지를 자동으로 써 주는 도구.**
 
@@ -41,7 +41,7 @@
 필요한 것: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` CLI, 로그인 상태), `git`, `python3`, `cron`. 선택: `gh` (비공개 GitHub 저장소를 대신 만들어 줌).
 
 ```bash
-git clone https://github.com/tom0266/claude-worklog ~/worklog
+git clone https://github.com/tom0266/whylog ~/worklog
 cd ~/worklog
 vi worklog.conf        # 대개 그대로 둬도 됩니다 (아래 참조)
 bash install.sh
@@ -125,3 +125,5 @@ crontab -l | grep -v -e claude_log.sh -e rollup.sh | crontab -
 ## 라이선스
 
 [MIT](LICENSE)
+
+Anthropic과 무관한 비공식 커뮤니티 프로젝트입니다. Claude, Claude Code는 Anthropic의 상표입니다.
