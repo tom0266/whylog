@@ -69,7 +69,7 @@ To change the run time: `CRON_TIME="30 19" bash install.sh` (minute hour; the de
 | `CLAUDE_BIN` | (auto) | Path to the `claude` executable |
 | `DIFF_BUDGET` etc. | 60000 / 6000 / 40 | Caps on how much code diff goes into the prompt |
 | `SESS_BUDGET` | 30000 | Cap on the session evidence |
-| `SKIP_DIR` | (empty) | Sessions whose path contains this string are not logged |
+| `SKIP_DIR` | (empty) | Sessions whose path contains this string are not logged (comma-separated for several) |
 | `EXCLUDE` | (empty) | Extra folders to keep out of the code diff, as space-separated gitignore patterns (e.g. `"/datasets/ /runs/*/outputs/"`) |
 
 ## How it knows what you did

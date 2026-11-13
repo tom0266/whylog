@@ -68,7 +68,7 @@ bash install.sh
 | `CLAUDE_BIN` | (자동 탐지) | `claude` 실행 파일 경로 |
 | `DIFF_BUDGET` 등 | 60000 / 6000 / 40 | 프롬프트에 실을 코드 diff 분량 상한 |
 | `SESS_BUDGET` | 30000 | 세션 기록에서 뽑아 실을 근거 분량 상한 |
-| `SKIP_DIR` | (빈 값) | 경로에 이 문자열이 있는 세션은 기록하지 않음 |
+| `SKIP_DIR` | (빈 값) | 경로에 이 문자열이 있는 세션은 기록하지 않음 (여러 개는 쉼표로 구분) |
 | `EXCLUDE` | (빈 값) | 코드 diff에서 뺄 폴더. 공백으로 구분한 gitignore 패턴 (예: `"/datasets/ /runs/*/outputs/"`) |
 
 ## 어떻게 그날 한 일을 아는가

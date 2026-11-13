@@ -8,7 +8,7 @@ goes into the prompt. Only these events are extracted:
   - descriptions of commands run (= 'how')
   - the session's final message (= 'how it ended')
 
-Usage: extract_sessions.py <TRACK_REPO> [YYYY-MM-DD] [SKIP_DIR] [CHAR_BUDGET]
+Usage: extract_sessions.py <TRACK_REPO> [YYYY-MM-DD] [SKIP_DIRS (comma-separated)] [CHAR_BUDGET]
 """
 import json
 import os
@@ -84,7 +84,7 @@ def scan(path, day, repo, skip=""):
         if local_date(o.get("timestamp", "")) != day:
             continue
         c = o.get("cwd", "")
-        if not c.startswith(repo) or (skip and skip in c):
+        if not c.startswith(repo) or any(s in c for s in skip):
             continue
         cwd = cwd or c
         if o.get("isSidechain"):          # subagent conversations are not user intent
@@ -123,7 +123,7 @@ def scan(path, day, repo, skip=""):
 def main():
     repo = sys.argv[1]
     day = sys.argv[2] if len(sys.argv) > 2 else datetime.date.today().isoformat()
-    skip = sys.argv[3] if len(sys.argv) > 3 else ""   # skip paths containing this
+    skip = [s.strip() for s in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if s.strip()]   # skip paths containing any of these (comma-separated)
     budget = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else 0   # 0 = no cap
     root = os.path.expanduser("~/.claude/projects")
     if not os.path.isdir(root):

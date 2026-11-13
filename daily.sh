@@ -214,6 +214,10 @@ if [ -n "$HAD_PREV" ] && [ -n "$DIFF_RANGE" ]; then
       | sort -k1,1nr | cut -f2 \
       | { n=0; seen=" "
           while [ "$n" -lt "$DIFF_MAX_FILES" ] && IFS= read -r f; do
+            # Backfills and same-day re-runs diff old snapshot commits, which may still hold files
+            # excluded since then — drop them here too. Match against the snapshot's own exclude list
+            # only (check-ignore would also apply the work tree's .gitignore).
+            snap ls-files -c -o -i --exclude-from="$SNAP/info/exclude" -- "$f" 2>/dev/null | grep -q . && continue
             d=$(snap diff $DIFF_RANGE -- "$f" 2>/dev/null | head -c "$DIFF_PER_FILE")
             # The same change copied into many places (e.g. code saved into every experiment
             # folder) is shown once; compare the diff body without its path headers.
@@ -241,7 +245,7 @@ SESSIONS=$(python3 "$SCRIPT_DIR/extract_sessions.py" "$TRACK_REPO" "$DATE" "$SKI
 PROMPTS=$(python3 - "$TRACK_REPO" "$DATE" "$SKIP_DIR" <<'PY' 2>/dev/null
 import json, os, sys, datetime
 repo, day = sys.argv[1], sys.argv[2]
-skip = sys.argv[3] if len(sys.argv) > 3 else ""
+skip = [s.strip() for s in (sys.argv[3] if len(sys.argv) > 3 else "").split(",") if s.strip()]
 hist = os.path.expanduser("~/.claude/history.jsonl")
 start = int(datetime.datetime.combine(datetime.date.fromisoformat(day), datetime.time()).timestamp() * 1000)
 end = start + 86400 * 1000
@@ -259,7 +263,7 @@ try:
             proj = str(o.get("project") or "")
             if not (start <= o.get("timestamp", 0) < end):
                 continue
-            if not proj.startswith(repo) or (skip and skip in proj):
+            if not proj.startswith(repo) or any(s in proj for s in skip):
                 continue
             d = (o.get("display") or "").strip()
             if d and not d.startswith("/") and d not in ("exit", "quit"):
@@ -347,6 +351,17 @@ if [ -z "$SESSIONS$PROMPTS$DIFF_STAT$COMMITS$MTIME_FILES" ]; then
 else
   TO=$(command -v timeout || command -v gtimeout || true)   # macOS has no timeout by default
   NARRATIVE=$(${TO:+"$TO" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+  # A refusal comes back as ordinary prose (exit 0), not an error. The format demands TL;DR first,
+  # so anything else is treated as refused/malformed: retry split by project.
+  if [ -n "$NARRATIVE" ] && ! printf '%s\n' "$NARRATIVE" | head -3 | grep -qF '**TL;DR**'; then
+    echo "[warn] summary refused or malformed — retrying per project" >&2
+    EVD=$(mktemp -d)
+    printf '%s' "${SESSIONS:-$PROMPTS}" > "$EVD/sessions.txt"
+    if [ -n "$DIFF_BODY" ]; then printf '%s' "$DIFF_BODY" > "$EVD/changes.txt"; else printf '%s' "$MTIME_FILES" > "$EVD/changes.txt"; fi
+    printf '%s' "$COMMITS" > "$EVD/commits.txt"
+    NARRATIVE=$(python3 "$SCRIPT_DIR/split_summary.py" "$EVD" "$TRACK_REPO" "$CLAUDE_BIN" "$MODEL" "$SYS" "$TIMEOUT_SEC" "$LANGUAGE" 2>/dev/null)
+    rm -rf "$EVD"
+  fi
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
