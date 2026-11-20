@@ -8,9 +8,10 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"   # repo root: whylog.conf and, by default, the logs
 # shellcheck source=/dev/null
-[ -f "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}" ] && . "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}"
-: "${WORKLOG_DIR:=$SCRIPT_DIR}"
+[ -f "${WHYLOG_CONF:-$ROOT_DIR/whylog.conf}" ] && . "${WHYLOG_CONF:-$ROOT_DIR/whylog.conf}"
+: "${WORKLOG_DIR:=$ROOT_DIR}"
 : "${MODEL:=opus}"
 : "${TIMEOUT_SEC:=600}"
 : "${LANGUAGE:=ko}"

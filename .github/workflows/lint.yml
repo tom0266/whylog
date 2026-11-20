@@ -10,6 +10,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck --severity=warning *.sh
+        run: shellcheck --severity=warning install.sh scripts/*.sh
       - name: python syntax
-        run: python3 -m py_compile extract_sessions.py split_summary.py
+        run: python3 -m py_compile scripts/extract_sessions.py scripts/split_summary.py

@@ -74,12 +74,12 @@ git `user.name`·`user.email`이 없어도 됩니다. 없으면 커밋은 `whylo
 | 항목 | 기본값 | 설명 |
 |---|---|---|
 | `TRACK_REPO` | `$HOME` | 기록 대상 작업 폴더. 이 아래의 코드·문서 변경과 세션이 대상 |
-| `WORKLOG_DIR` | (이 폴더) | 일지가 쌓이는 곳 |
+| `WORKLOG_DIR` | (whylog를 clone한 폴더) | 일지가 쌓이는 곳 |
 | `MODEL` | `opus` | 요약 모델. 사용량을 줄이려면 `sonnet` |
 | `LANGUAGE` | `ko` | 일지 언어: `ko` 또는 `en` |
 | `CLAUDE_BIN` | (자동 탐지) | `claude` 실행 파일 경로 |
 | `TIMEOUT_SEC` | 600 | 모델 호출 한 번의 제한 시간(초) |
-| `WHYLOG_CONF` | (이 폴더의 `whylog.conf`) | 파일 안의 항목이 아니라 환경변수. 설정 파일을 도구 폴더 밖에 둘 때 경로를 지정. `daily.sh`·`rollup.sh`·`install.sh`가 읽음. `install.sh`는 이 값을 cron 줄에 넣지 않으므로 직접 추가해야 함 |
+| `WHYLOG_CONF` | (`install.sh` 옆의 `whylog.conf`) | 파일 안의 항목이 아니라 환경변수. 설정 파일을 도구 폴더 밖에 둘 때 경로를 지정. `daily.sh`·`rollup.sh`·`install.sh`가 읽고, 값이 있으면 `install.sh`가 cron 줄에도 넣어 줌 |
 | `DIFF_BUDGET` 등 | 60000 / 6000 / 40 | 프롬프트에 실을 코드 diff 분량 상한 |
 | `SESS_BUDGET` | 30000 | 세션 기록에서 뽑아 실을 근거 분량 상한 |
 | `SKIP_DIR` | (빈 값) | 경로에 이 문자열이 있는 세션·프롬프트·커밋·수정 파일은 기록하지 않음 (여러 개는 쉼표로 구분). 코드 diff에는 **적용되지 않음** |
@@ -103,12 +103,12 @@ diff는 하루 수십만 자에 이르므로 전부 넣을 수 없습니다. **�
 
 | 하고 싶은 것 | 명령 |
 |---|---|
-| 지금 즉시 오늘 일지 생성 | `bash daily.sh` |
-| 기록하지 않고 결과만 미리보기 | `bash daily.sh --dry-run` |
-| 놓친 날 복구 | `bash daily.sh --date 2026-08-13` |
-| 주간 요약 | `bash rollup.sh week` |
-| 월간 요약 | `bash rollup.sh month 2026-08` (`last`는 지난달) |
-| 인덱스 갱신 | `bash rollup.sh index` |
+| 지금 즉시 오늘 일지 생성 | `bash scripts/daily.sh` |
+| 기록하지 않고 결과만 미리보기 | `bash scripts/daily.sh --dry-run` |
+| 놓친 날 복구 | `bash scripts/daily.sh --date 2026-08-13` |
+| 주간 요약 | `bash scripts/rollup.sh week` |
+| 월간 요약 | `bash scripts/rollup.sh month 2026-08` (`last`는 지난달) |
+| 인덱스 갱신 | `bash scripts/rollup.sh index` |
 
 주간 요약은 일요일 밤, 월간 요약은 매달 1일에 cron으로 돌고(설치 절 참조), `INDEX.md`는 매일 일지 작성 후 갱신됩니다.
 
@@ -120,10 +120,11 @@ diff는 하루 수십만 자에 이르므로 전부 넣을 수 없습니다. **�
 whylog/
 ├── whylog.conf          # 설정 — 환경이 다르면 여기만 고치면 된다
 ├── install.sh           # 설치 (멱등)
-├── daily.sh             # 일일 기록 (cron 매일 밤)
-├── rollup.sh            # 주간/월간 요약 + INDEX (cron 주간·월간)
-├── extract_sessions.py  # 세션 트랜스크립트 → 이벤트 추출
-├── split_summary.py     # 요약이 거부·오형식일 때 프로젝트별로 나눠 다시 요약하는 대체 경로
+├── scripts/
+│   ├── daily.sh             # 일일 기록 (cron 매일 밤)
+│   ├── rollup.sh            # 주간/월간 요약 + INDEX (cron 주간·월간)
+│   ├── extract_sessions.py  # 세션 트랜스크립트 → 이벤트 추출
+│   └── split_summary.py     # 요약이 거부·오형식일 때 프로젝트별로 나눠 다시 요약하는 대체 경로
 ├── .whylog-template     # 이 도구 저장소 이름 (내 일지가 이곳으로 push되는 것을 막는 데 쓰임)
 ├── examples/            # 출력 샘플
 ├── cron.log             # cron 작업 출력 (첫 실행 때 생김, 커밋 안 됨)
@@ -146,13 +147,13 @@ whylog/
 
 | 증상 | 확인할 것 |
 |---|---|
-| 그날 일지에 `⚠️ Claude 자동 요약 실패` 머리글이 있음 | 호출이 실패한 것. 이유는 `cron.log`에서 확인. 다음 실행이 최근 3일 중 빠진 날을 다시 시도하고, 더 오래된 날은 `bash daily.sh --date YYYY-MM-DD`로 복구 |
-| 로그인이 만료됐거나 모델 호출이 거부됨 | `claude`를 직접 한 번 실행해 로그인 상태를 확인한 뒤 `bash daily.sh`로 다시 시도 |
+| 그날 일지에 `⚠️ Claude 자동 요약 실패` 머리글이 있음 | 호출이 실패한 것. 이유는 `cron.log`에서 확인. 다음 실행이 최근 3일 중 빠진 날을 다시 시도하고, 더 오래된 날은 `bash scripts/daily.sh --date YYYY-MM-DD`로 복구 |
+| 로그인이 만료됐거나 모델 호출이 거부됨 | `claude`를 직접 한 번 실행해 로그인 상태를 확인한 뒤 `bash scripts/daily.sh`로 다시 시도 |
 | 사용량 한도 도달 | 호출이 같은 방식으로 실패하고 이후 실행에서 다시 시도됨. `MODEL="sonnet"`으로 사용량을 줄일 수 있음 |
 | `cron.log`에 `claude executable not found` | cron은 환경이 최소라서 생김. `whylog.conf`에 `CLAUDE_BIN`을 쓰거나 `install.sh`를 다시 실행해 cron `PATH`에 `claude` 폴더가 들어가게 함 |
 | git 사용자 정보 오류 | 생기지 않아야 정상: 커밋은 `whylog <whylog@localhost>`로 대체됨. 내 이름을 쓰려면 `git config --global user.name`, `user.email` 설정 |
 | 설치가 "origin is a PUBLIC repo"로 중단됨 | 메시지대로 저장소를 비공개로 바꾸거나 `origin`을 비공개 저장소로 돌린 뒤 `install.sh`를 다시 실행 |
-| 무엇이 전송될지 확인하고 싶음 | `bash daily.sh --dry-run`이 일지·스냅샷·커밋을 만들지 않고 근거 분량과 요약을 출력 |
+| 무엇이 전송될지 확인하고 싶음 | `bash scripts/daily.sh --dry-run`이 일지·스냅샷·커밋을 만들지 않고 근거 분량과 요약을 출력 |
 
 ## 업데이트
 
@@ -170,7 +171,7 @@ bash install.sh                                              # cron 줄을 갱�
 ## 제거
 
 ```bash
-crontab -l | grep -v -e whylog/daily.sh -e whylog/rollup.sh | crontab -
+crontab -l | grep -v -e whylog/scripts/daily.sh -e whylog/scripts/rollup.sh | crontab -
 ```
 
 `whylog`가 아닌 다른 폴더 이름으로 설치했다면 그 이름으로 바꿔 넣으세요. 일지가 더 필요 없으면 폴더를 지우면 됩니다.

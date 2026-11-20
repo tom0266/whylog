@@ -3,16 +3,17 @@
 # Two kinds of evidence keep "what I did today" accurate:
 #   1) What changed → a nightly snapshot in the log repo's .snapshot.git gives "diff since yesterday"
 #   2) Why          → prompts, edits, commands and conclusions extracted from the day's session transcripts
-# Settings come from whylog.conf in the same folder (defaults below otherwise).
+# Settings come from whylog.conf one folder up, next to install.sh (defaults below otherwise).
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"   # repo root: whylog.conf, .whylog-template and, by default, the logs
 # shellcheck source=/dev/null
-[ -f "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}" ] && . "${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}"
+[ -f "${WHYLOG_CONF:-$ROOT_DIR/whylog.conf}" ] && . "${WHYLOG_CONF:-$ROOT_DIR/whylog.conf}"
 
 # ===== Defaults (kept as-is if whylog.conf already set them) =====
 : "${TRACK_REPO:=$HOME}"                 # root of the work folder to log
-: "${WORKLOG_DIR:=$SCRIPT_DIR}"          # log repo (where this script lives)
+: "${WORKLOG_DIR:=$ROOT_DIR}"            # log repo (the folder this tool was cloned into)
 : "${MODEL:=opus}"                       # summarizing model
 : "${DIFF_BUDGET:=60000}"                # total diff size in the prompt (chars); generous, it's one call a day
 : "${DIFF_PER_FILE:=6000}"               # per-file cap so one file can't eat the budget (chars)
@@ -466,7 +467,7 @@ if ! git diff --cached --quiet; then
   ORIGIN=$(git remote get-url origin 2>/dev/null || true)
   # Last line of defence: a clone of the tool repo keeps its origin, and pushing there would
   # publish the logs. install.sh detaches it; this refuses in case the install was skipped.
-  TOOL_REPO=$(cat "$SCRIPT_DIR/.whylog-template" 2>/dev/null || true)
+  TOOL_REPO=$(cat "$ROOT_DIR/.whylog-template" 2>/dev/null || true)
   if [ -n "$ORIGIN" ] && [ -n "$TOOL_REPO" ]; then
     case "$ORIGIN" in
       *"$TOOL_REPO"*)

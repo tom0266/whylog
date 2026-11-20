@@ -4,6 +4,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS="$SCRIPT_DIR/scripts"                    # daily.sh, rollup.sh and the two python helpers live here
 CONF="${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}"   # WHYLOG_CONF lets the config live outside the tool folder
 CRON_TIME="${CRON_TIME:-0 22}"        # default: daily at 22:00. e.g. CRON_TIME="30 19" ./install.sh
 
@@ -119,7 +120,7 @@ echo "[4/6] Preparing the code snapshot repo"
 SNAP="$WORKLOG_DIR/.snapshot.git"
 if [ ! -d "$SNAP" ]; then
   say "Taking the first snapshot (this is the baseline; exact daily diffs start tomorrow)"
-  bash "$SCRIPT_DIR/daily.sh" --init-snapshot >/dev/null 2>&1   # create the snapshot repo with its excludes (no model call)
+  bash "$SCRIPTS/daily.sh" --init-snapshot >/dev/null 2>&1   # create the snapshot repo with its excludes (no model call)
   # Same fixed identity as daily.sh, so the baseline commit works without a global git config
   snap() {
     git -c user.name=whylog -c user.email=whylog@localhost -c core.quotepath=false \
@@ -145,7 +146,7 @@ case ":$CPATH_DIRS:" in *":$CBIN_DIR:"*) ;; *) CPATH_DIRS="$CBIN_DIR:$CPATH_DIRS
 CPATH="PATH=$CPATH_DIRS"
 # Quote the paths (a folder name may contain spaces) and escape % (cron reads it as a newline).
 esc() { printf '%s' "$1" | sed 's/%/\\%/g'; }
-DSH=$(esc "$SCRIPT_DIR/daily.sh"); RSH=$(esc "$SCRIPT_DIR/rollup.sh"); CLOG=$(esc "$WORKLOG_DIR/cron.log")
+DSH=$(esc "$SCRIPTS/daily.sh"); RSH=$(esc "$SCRIPTS/rollup.sh"); CLOG=$(esc "$WORKLOG_DIR/cron.log")
 # Carry WHYLOG_CONF into cron when the config lives outside the tool folder; cron reads no profile
 CONF_ENV=""
 [ -n "${WHYLOG_CONF:-}" ] && CONF_ENV="WHYLOG_CONF='$(esc "$WHYLOG_CONF")' "
@@ -161,8 +162,12 @@ WARG="week"; [ "$WDOW" -eq 1 ] && WARG="week last"
 WLINE="$WM $WH * * $WDOW $CPATH $CONF_ENV/bin/bash '$RSH' $WARG >> '$CLOG' 2>&1"
 # Monthly summary on the 1st, for the month that just ended
 MLINE="$WM $WH 1 * * $CPATH $CONF_ENV/bin/bash '$RSH' month last >> '$CLOG' 2>&1"
-# Replace only lines that call this folder's scripts (other jobs, even another rollup.sh, stay)
-CUR=$(crontab -l 2>/dev/null | grep -v -F -e "$SCRIPT_DIR/daily.sh" -e "$SCRIPT_DIR/claude_log.sh" -e "$SCRIPT_DIR/rollup.sh" || true)
+# Replace only lines that call this folder's scripts (other jobs, even another rollup.sh, stay).
+# The bare $SCRIPT_DIR/ names are where these scripts lived before they moved into scripts/,
+# so an older install's cron lines are replaced rather than left to run beside the new ones.
+CUR=$(crontab -l 2>/dev/null | grep -v -F \
+  -e "$SCRIPTS/daily.sh" -e "$SCRIPTS/rollup.sh" \
+  -e "$SCRIPT_DIR/daily.sh" -e "$SCRIPT_DIR/rollup.sh" -e "$SCRIPT_DIR/claude_log.sh" || true)
 printf '%s\n%s\n%s\n%s\n' "$CUR" "$LINE" "$WLINE" "$MLINE" | grep -v '^$' | crontab -
 say "daily  : $LINE"
 say "weekly : $WLINE"
@@ -170,15 +175,15 @@ say "monthly: $MLINE"
 
 # ── 6. Test run ──
 echo "[6/6] Test run (--dry-run, nothing is written)"
-bash "$SCRIPT_DIR/daily.sh" --dry-run 2>&1 | head -8
+bash "$SCRIPTS/daily.sh" --dry-run 2>&1 | head -8
 
 cat <<EOF
 
 == Done ==
 Your daily log will be written every day at $(printf '%02d:%02d' "$CRON_HOUR" "$CRON_MIN").
 
-  Write today's log now : bash $SCRIPT_DIR/daily.sh
-  Preview only          : bash $SCRIPT_DIR/daily.sh --dry-run
-  Recover a missed day  : bash $SCRIPT_DIR/daily.sh --date YYYY-MM-DD
-  Weekly summary        : bash $SCRIPT_DIR/rollup.sh week
+  Write today's log now : bash $SCRIPTS/daily.sh
+  Preview only          : bash $SCRIPTS/daily.sh --dry-run
+  Recover a missed day  : bash $SCRIPTS/daily.sh --date YYYY-MM-DD
+  Weekly summary        : bash $SCRIPTS/rollup.sh week
 EOF

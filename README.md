@@ -75,12 +75,12 @@ Git `user.name` and `user.email` are not required. Without them, commits use `wh
 | Key | Default | Description |
 |---|---|---|
 | `TRACK_REPO` | `$HOME` | Folder to track. Code/doc changes and Claude Code sessions under it are logged |
-| `WORKLOG_DIR` | (this folder) | Where the logs are kept |
+| `WORKLOG_DIR` | (the folder whylog was cloned into) | Where the logs are kept |
 | `MODEL` | `opus` | Summarizing model. Use `sonnet` to save usage |
 | `LANGUAGE` | `ko` | Log language: `ko` or `en` |
 | `CLAUDE_BIN` | (auto) | Path to the `claude` executable |
 | `TIMEOUT_SEC` | 600 | Time limit for each model call, in seconds |
-| `WHYLOG_CONF` | (this folder's `whylog.conf`) | Environment variable, not a key in the file. Path of the config file, for keeping it outside the tool folder. Read by `daily.sh`, `rollup.sh` and `install.sh`. `install.sh` does not write it into the cron lines, so add it to them yourself |
+| `WHYLOG_CONF` | (`whylog.conf` beside `install.sh`) | Environment variable, not a key in the file. Path of the config file, for keeping it outside the tool folder. Read by `daily.sh`, `rollup.sh` and `install.sh`, and carried into the cron lines when it is set |
 | `DIFF_BUDGET` etc. | 60000 / 6000 / 40 | Caps on how much code diff goes into the prompt |
 | `SESS_BUDGET` | 30000 | Cap on the session evidence |
 | `SKIP_DIR` | (empty) | Sessions, prompts, commits and modified-file entries whose path contains this string are not logged (comma-separated for several). It does **not** filter the code diff |
@@ -104,12 +104,12 @@ Before anything is sent, the diff and the session evidence pass through a filter
 
 | Task | Command |
 |---|---|
-| Write today's log now | `bash daily.sh` |
-| Preview without writing | `bash daily.sh --dry-run` |
-| Recover a missed day | `bash daily.sh --date 2026-08-13` |
-| Weekly summary | `bash rollup.sh week` |
-| Monthly summary | `bash rollup.sh month 2026-08` (`last` means the previous month) |
-| Rebuild the index | `bash rollup.sh index` |
+| Write today's log now | `bash scripts/daily.sh` |
+| Preview without writing | `bash scripts/daily.sh --dry-run` |
+| Recover a missed day | `bash scripts/daily.sh --date 2026-08-13` |
+| Weekly summary | `bash scripts/rollup.sh week` |
+| Monthly summary | `bash scripts/rollup.sh month 2026-08` (`last` means the previous month) |
+| Rebuild the index | `bash scripts/rollup.sh index` |
 
 The weekly summary runs from cron on Sunday nights and the monthly one on the 1st (see Quick start), and `INDEX.md` is refreshed after every daily run.
 
@@ -121,10 +121,11 @@ If a summary is wrong, ask Claude in any session to "fix that part of today's lo
 whylog/
 ├── whylog.conf          # settings: edit this file if your setup differs
 ├── install.sh           # installer (idempotent)
-├── daily.sh             # daily log (cron, nightly)
-├── rollup.sh            # weekly/monthly summaries + INDEX (cron, weekly and monthly)
-├── extract_sessions.py  # session transcripts → events
-├── split_summary.py     # fallback: re-summarize per project when a summary is refused or malformed
+├── scripts/
+│   ├── daily.sh             # daily log (cron, nightly)
+│   ├── rollup.sh            # weekly/monthly summaries + INDEX (cron, weekly and monthly)
+│   ├── extract_sessions.py  # session transcripts → events
+│   └── split_summary.py     # fallback: re-summarize per project when a summary is refused or malformed
 ├── .whylog-template     # name of this tool repo (used to keep your logs from being pushed here)
 ├── examples/            # sample outputs
 ├── cron.log             # output of the cron jobs (created on first run, not committed)
@@ -147,13 +148,13 @@ The first place to look is `cron.log` in the log folder (`tail -50 cron.log`). W
 
 | Symptom | What to check |
 |---|---|
-| The day's log has a `⚠️ Claude summary failed` header | The call failed. Read `cron.log` for the reason. The next run retries any of the last 3 days; for an older day, run `bash daily.sh --date YYYY-MM-DD` |
-| Login expired or the model call is refused | Run `claude` once by hand to check that it is logged in, then retry with `bash daily.sh` |
+| The day's log has a `⚠️ Claude summary failed` header | The call failed. Read `cron.log` for the reason. The next run retries any of the last 3 days; for an older day, run `bash scripts/daily.sh --date YYYY-MM-DD` |
+| Login expired or the model call is refused | Run `claude` once by hand to check that it is logged in, then retry with `bash scripts/daily.sh` |
 | Usage limit reached | The call fails the same way and the day is retried on a later run. Use `MODEL="sonnet"` to spend less |
 | `claude executable not found` in `cron.log` | cron has a minimal environment. Set `CLAUDE_BIN` in `whylog.conf`, or run `install.sh` again so the cron `PATH` includes the folder `claude` is in |
 | Git identity errors | Not expected: commits fall back to `whylog <whylog@localhost>`. To use your own, set `git config --global user.name` and `user.email` |
 | Install stops with "origin is a PUBLIC repo" | Make the repo private or point `origin` at a private one, as the message says, then run `install.sh` again |
-| Unsure what would be sent | `bash daily.sh --dry-run` prints the evidence sizes and the summary without writing a log, a snapshot or a commit |
+| Unsure what would be sent | `bash scripts/daily.sh --dry-run` prints the evidence sizes and the summary without writing a log, a snapshot or a commit |
 
 ## Updating
 
@@ -171,7 +172,7 @@ If you edited `whylog.conf`, resolve any merge conflict in it. Keeping the confi
 ## Uninstall
 
 ```bash
-crontab -l | grep -v -e whylog/daily.sh -e whylog/rollup.sh | crontab -
+crontab -l | grep -v -e whylog/scripts/daily.sh -e whylog/scripts/rollup.sh | crontab -
 ```
 
 If you installed into a folder not named `whylog`, use that folder name instead. Then delete the folder if you no longer need the logs.
