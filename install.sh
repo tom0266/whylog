@@ -140,7 +140,9 @@ echo "[5/6] Registering cron jobs"
 # The folder claude was found in goes first: npm-global, nvm and Homebrew all live outside the
 # default list, and without this the nightly run fails with "claude executable not found".
 CBIN_DIR=$(dirname "$CLAUDE_FOUND")
-CPATH="PATH=$CBIN_DIR:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+CPATH_DIRS="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+case ":$CPATH_DIRS:" in *":$CBIN_DIR:"*) ;; *) CPATH_DIRS="$CBIN_DIR:$CPATH_DIRS" ;; esac
+CPATH="PATH=$CPATH_DIRS"
 # Quote the paths (a folder name may contain spaces) and escape % (cron reads it as a newline).
 esc() { printf '%s' "$1" | sed 's/%/\\%/g'; }
 DSH=$(esc "$SCRIPT_DIR/daily.sh"); RSH=$(esc "$SCRIPT_DIR/rollup.sh"); CLOG=$(esc "$WORKLOG_DIR/cron.log")
