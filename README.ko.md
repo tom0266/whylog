@@ -2,6 +2,8 @@
 
 [English](README.md) | **한국어**
 
+![whylog: 매일 밤 저절로 쓰이는 연구 일지](assets/banner.png)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Shell](https://img.shields.io/badge/bash-%2B%20python3-4EAA25)
 ![Requires Claude Code](https://img.shields.io/badge/requires-Claude%20Code-555)
@@ -86,6 +88,8 @@ git `user.name`·`user.email`이 없어도 됩니다. 없으면 커밋은 `whylo
 | `EXCLUDE` | (빈 값) | 코드 diff에서 뺄 폴더. 한 줄에 공백으로 구분한 gitignore 패턴 (예: `"/datasets/ /runs/*/outputs/"`). 스냅샷 diff에만 적용 |
 
 ## 어떻게 그날 한 일을 아는가
+
+![두 가지 근거가 매일 밤 한 번의 요약으로 들어가 일일 일지·주간/월간 요약·인덱스가 된다](assets/how-it-works.png)
 
 정확도의 두 축이 있습니다.
 

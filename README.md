@@ -2,6 +2,8 @@
 
 **English** | [한국어](README.ko.md)
 
+![whylog: your research log, written every night](assets/banner.png)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Shell](https://img.shields.io/badge/bash-%2B%20python3-4EAA25)
 ![Requires Claude Code](https://img.shields.io/badge/requires-Claude%20Code-555)
@@ -87,6 +89,8 @@ Git `user.name` and `user.email` are not required. Without them, commits use `wh
 | `EXCLUDE` | (empty) | Extra folders to keep out of the code diff, as space-separated gitignore patterns on one line (e.g. `"/datasets/ /runs/*/outputs/"`). It filters the snapshot diff only |
 
 ## How it knows what you did
+
+![Two kinds of evidence go into one nightly summary, which becomes the daily log, the rollups and the index](assets/how-it-works.png)
 
 It relies on two kinds of evidence.
 
