@@ -81,8 +81,10 @@ fi
 # A fork or a repo made from the template is public unless you chose otherwise, and the nightly run
 # pushes to origin. Check before that happens rather than after a month of logs is online.
 if [ -n "$CUR_ORIGIN" ]; then
+  # gh wants owner/repo; normalise ssh and .git forms or an SSH remote falls through as "unknown"
+  SLUG=$(printf '%s' "$CUR_ORIGIN" | sed -E -e 's#\.git$##' -e 's#^git@[^:]*:##' -e 's#^[a-z+]+://[^/]*/##')
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    VIS=$(gh repo view "$CUR_ORIGIN" --json isPrivate -q .isPrivate 2>/dev/null || echo unknown)
+    VIS=$(gh repo view "$SLUG" --json isPrivate -q .isPrivate 2>/dev/null || echo unknown)
     case "$VIS" in
       false) fail "origin is a PUBLIC repo: $CUR_ORIGIN
   Your daily logs would be published. Fix it one of these ways, then run install again:
