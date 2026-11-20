@@ -22,7 +22,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"   # repo root: whylog.conf, .whylog-tem
 : "${TIMEOUT_SEC:=600}"
 : "${SKIP_DIR:=}"                        # skip sessions whose path contains this (empty = none)
 : "${EXCLUDE:=}"                         # extra snapshot excludes, space-separated gitignore patterns
-: "${LANGUAGE:=ko}"                      # log language: ko | en
+: "${LANGUAGE:=en}"                      # log language: ko | en
 SNAP="$WORKLOG_DIR/.snapshot.git"        # code/docs-only snapshot repo (for the daily diff)
 if [ "$LANGUAGE" = "en" ]; then
   SYS="You are a non-interactive summarizer. Never ask questions. Use only the text the user gives you and output an English summary immediately. If information is missing, summarize what is there."

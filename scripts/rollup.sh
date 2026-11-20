@@ -14,7 +14,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"   # repo root: whylog.conf and, by defa
 : "${WORKLOG_DIR:=$ROOT_DIR}"
 : "${MODEL:=opus}"
 : "${TIMEOUT_SEC:=600}"
-: "${LANGUAGE:=ko}"
+: "${LANGUAGE:=en}"
 if [ -z "${CLAUDE_BIN:-}" ]; then
   CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
   [ -z "$CLAUDE_BIN" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE_BIN="$HOME/.local/bin/claude"

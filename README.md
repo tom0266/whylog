@@ -79,7 +79,7 @@ Git `user.name` and `user.email` are not required. Without them, commits use `wh
 | `TRACK_REPO` | `$HOME` | Folder to track. Code/doc changes and Claude Code sessions under it are logged |
 | `WORKLOG_DIR` | (the folder whylog was cloned into) | Where the logs are kept |
 | `MODEL` | `opus` | Summarizing model. Use `sonnet` to save usage |
-| `LANGUAGE` | `ko` | Log language: `ko` or `en` |
+| `LANGUAGE` | `en` | Log language: `ko` or `en` |
 | `CLAUDE_BIN` | (auto) | Path to the `claude` executable |
 | `TIMEOUT_SEC` | 600 | Time limit for each model call, in seconds |
 | `WHYLOG_CONF` | (`whylog.conf` beside `install.sh`) | Environment variable, not a key in the file. Path of the config file, for keeping it outside the tool folder. Read by `daily.sh`, `rollup.sh` and `install.sh`, and carried into the cron lines when it is set |

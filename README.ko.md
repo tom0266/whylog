@@ -78,7 +78,7 @@ git `user.name`·`user.email`이 없어도 됩니다. 없으면 커밋은 `whylo
 | `TRACK_REPO` | `$HOME` | 기록 대상 작업 폴더. 이 아래의 코드·문서 변경과 세션이 대상 |
 | `WORKLOG_DIR` | (whylog를 clone한 폴더) | 일지가 쌓이는 곳 |
 | `MODEL` | `opus` | 요약 모델. 사용량을 줄이려면 `sonnet` |
-| `LANGUAGE` | `ko` | 일지 언어: `ko` 또는 `en` |
+| `LANGUAGE` | `en` | 일지 언어: `ko` 또는 `en` |
 | `CLAUDE_BIN` | (자동 탐지) | `claude` 실행 파일 경로 |
 | `TIMEOUT_SEC` | 600 | 모델 호출 한 번의 제한 시간(초) |
 | `WHYLOG_CONF` | (`install.sh` 옆의 `whylog.conf`) | 파일 안의 항목이 아니라 환경변수. 설정 파일을 도구 폴더 밖에 둘 때 경로를 지정. `daily.sh`·`rollup.sh`·`install.sh`가 읽고, 값이 있으면 `install.sh`가 cron 줄에도 넣어 줌 |
