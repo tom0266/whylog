@@ -4,8 +4,20 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONF="$SCRIPT_DIR/whylog.conf"
+CONF="${WHYLOG_CONF:-$SCRIPT_DIR/whylog.conf}"   # WHYLOG_CONF lets the config live outside the tool folder
 CRON_TIME="${CRON_TIME:-0 22}"        # default: daily at 22:00. e.g. CRON_TIME="30 19" ./install.sh
+
+# "09" is read as octal by the arithmetic below, so normalise with 10# and check the range here
+# rather than registering a broken cron line.
+case "$CRON_TIME" in
+  [0-9]*' '[0-9]*) ;;
+  *) echo "[error] CRON_TIME must be \"<minute> <hour>\", e.g. CRON_TIME=\"30 19\" (got: $CRON_TIME)" >&2; exit 1 ;;
+esac
+CRON_MIN=$((10#${CRON_TIME%% *})); CRON_HOUR=$((10#${CRON_TIME#* }))
+if [ "$CRON_MIN" -lt 0 ] || [ "$CRON_MIN" -gt 59 ] || [ "$CRON_HOUR" -lt 0 ] || [ "$CRON_HOUR" -gt 23 ]; then
+  echo "[error] CRON_TIME out of range: minute $CRON_MIN, hour $CRON_HOUR" >&2; exit 1
+fi
+CRON_TIME="$CRON_MIN $CRON_HOUR"
 
 say()  { echo "  $*"; }
 fail() { echo "[error] $*" >&2; exit 1; }
@@ -21,6 +33,12 @@ CLAUDE_FOUND=$(command -v claude 2>/dev/null || true)
 [ -z "$CLAUDE_FOUND" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE_FOUND="$HOME/.local/bin/claude"
 [ -z "$CLAUDE_FOUND" ] && fail "claude CLI not found. Install Claude Code and run again."
 say "claude: $CLAUDE_FOUND"
+# git needs an identity or every commit fails with "Please tell me who you are". The snapshot repo
+# carries its own, but the log repo uses yours, so say something now instead of failing nightly.
+if ! git config --get user.email >/dev/null 2>&1 || ! git config --get user.name >/dev/null 2>&1; then
+  say "note: git user.name/user.email are not set. Log commits will use a fallback identity."
+  say "      To use your own:  git config --global user.name 'You'; git config --global user.email you@example.com"
+fi
 
 # ── 2. Config ──
 echo "[2/6] Reading config"
@@ -50,13 +68,33 @@ fi
 # your log would be pushed there — so detach it, but only in that case.
 # (A repo created from the template has your own origin; leave it alone.)
 TOOL_REPO=$(cat "$SCRIPT_DIR/.whylog-template" 2>/dev/null)
-if [ -n "$TOOL_REPO" ] && [ -d "$WORKLOG_DIR/.git" ]; then
-  CUR_ORIGIN=$(git -C "$WORKLOG_DIR" remote get-url origin 2>/dev/null || true)
+CUR_ORIGIN=$(git -C "$WORKLOG_DIR" remote get-url origin 2>/dev/null || true)
+if [ -n "$TOOL_REPO" ] && [ -n "$CUR_ORIGIN" ]; then
   case "$CUR_ORIGIN" in
     *"$TOOL_REPO"*)
       git -C "$WORKLOG_DIR" remote remove origin
+      CUR_ORIGIN=""
       say "Removed the tool repo origin (so your logs are never pushed there)" ;;
   esac
+fi
+
+# A fork or a repo made from the template is public unless you chose otherwise, and the nightly run
+# pushes to origin. Check before that happens rather than after a month of logs is online.
+if [ -n "$CUR_ORIGIN" ]; then
+  if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    VIS=$(gh repo view "$CUR_ORIGIN" --json isPrivate -q .isPrivate 2>/dev/null || echo unknown)
+    case "$VIS" in
+      false) fail "origin is a PUBLIC repo: $CUR_ORIGIN
+  Your daily logs would be published. Fix it one of these ways, then run install again:
+    gh repo edit $CUR_ORIGIN --visibility private --accept-visibility-change-consequences
+    git -C $WORKLOG_DIR remote set-url origin <a private repo>
+    git -C $WORKLOG_DIR remote remove origin      # keep the logs local only" ;;
+      true)  say "Remote: $CUR_ORIGIN (private)" ;;
+      *)     say "Remote: $CUR_ORIGIN — visibility could not be checked. Make sure it is private." ;;
+    esac
+  else
+    say "Remote: $CUR_ORIGIN — gh is unavailable, so visibility was not checked. Make sure it is private."
+  fi
 fi
 
 if ! git -C "$WORKLOG_DIR" remote get-url origin >/dev/null 2>&1; then
@@ -72,8 +110,6 @@ if ! git -C "$WORKLOG_DIR" remote get-url origin >/dev/null 2>&1; then
   else
     say "gh not installed or not logged in → logs stay local (add one later with git remote add origin)."
   fi
-else
-  say "Remote: $(git -C "$WORKLOG_DIR" remote get-url origin)"
 fi
 
 # ── 4. Snapshot repo ──
@@ -82,7 +118,11 @@ SNAP="$WORKLOG_DIR/.snapshot.git"
 if [ ! -d "$SNAP" ]; then
   say "Taking the first snapshot (this is the baseline; exact daily diffs start tomorrow)"
   bash "$SCRIPT_DIR/daily.sh" --init-snapshot >/dev/null 2>&1   # create the snapshot repo with its excludes (no model call)
-  snap() { git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"; }
+  # Same fixed identity as daily.sh, so the baseline commit works without a global git config
+  snap() {
+    git -c user.name=whylog -c user.email=whylog@localhost -c core.quotepath=false \
+        --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"
+  }
   for pat in '*.py' '*.md' '*.sh' '*.ipynb' '*.tex' '*.R' '*.yaml' '*.yml'; do
     snap add -A -- "$pat" 2>/dev/null || true
   done
@@ -94,18 +134,35 @@ fi
 
 # ── 5. Register cron jobs ──
 echo "[5/6] Registering cron jobs"
-# cron doesn't read .bashrc, so set PATH on our lines only (never touch a crontab-wide PATH=)
-CPATH="PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
-LINE="${CRON_TIME} * * * $CPATH /bin/bash $SCRIPT_DIR/daily.sh >> $WORKLOG_DIR/cron.log 2>&1"
-# Weekly summary on Sunday, 30 minutes after the daily run, so the week's last day is included
-CM=${CRON_TIME%% *}; CH=${CRON_TIME#* }
-WM=$(( (CM + 30) % 60 )); WH=$(( (CH + (CM + 30) / 60) % 24 ))
-WLINE="$WM $WH * * 0 $CPATH /bin/bash $SCRIPT_DIR/rollup.sh week >> $WORKLOG_DIR/cron.log 2>&1"
+# cron doesn't read .bashrc, so set PATH on our lines only (never touch a crontab-wide PATH=).
+# The folder claude was found in goes first: npm-global, nvm and Homebrew all live outside the
+# default list, and without this the nightly run fails with "claude executable not found".
+CBIN_DIR=$(dirname "$CLAUDE_FOUND")
+CPATH="PATH=$CBIN_DIR:$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+# Quote the paths (a folder name may contain spaces) and escape % (cron reads it as a newline).
+esc() { printf '%s' "$1" | sed 's/%/\\%/g'; }
+DSH=$(esc "$SCRIPT_DIR/daily.sh"); RSH=$(esc "$SCRIPT_DIR/rollup.sh"); CLOG=$(esc "$WORKLOG_DIR/cron.log")
+# Carry WHYLOG_CONF into cron when the config lives outside the tool folder; cron reads no profile
+CONF_ENV=""
+[ -n "${WHYLOG_CONF:-}" ] && CONF_ENV="WHYLOG_CONF='$(esc "$WHYLOG_CONF")' "
+LINE="${CRON_TIME} * * * $CPATH $CONF_ENV/bin/bash '$DSH' >> '$CLOG' 2>&1"
+# Weekly summary 30 minutes after the daily run, so the week's last day is included. If that
+# crosses midnight the run belongs to Monday — on Sunday it would precede Sunday's own log.
+WM=$(( (CRON_MIN + 30) % 60 )); CARRY=$(( (CRON_MIN + 30) / 60 ))
+WH=$(( (CRON_HOUR + CARRY) % 24 ))
+WDOW=$(( (CRON_HOUR + CARRY) / 24 == 0 ? 0 : 1 ))
+# Landing on Monday means the Sunday run crossed midnight, so ask for the week that just ended —
+# plain "week" would summarise the week that had only just started.
+WARG="week"; [ "$WDOW" -eq 1 ] && WARG="week last"
+WLINE="$WM $WH * * $WDOW $CPATH $CONF_ENV/bin/bash '$RSH' $WARG >> '$CLOG' 2>&1"
+# Monthly summary on the 1st, for the month that just ended
+MLINE="$WM $WH 1 * * $CPATH $CONF_ENV/bin/bash '$RSH' month last >> '$CLOG' 2>&1"
 # Replace only lines that call this folder's scripts (other jobs, even another rollup.sh, stay)
 CUR=$(crontab -l 2>/dev/null | grep -v -F -e "$SCRIPT_DIR/daily.sh" -e "$SCRIPT_DIR/claude_log.sh" -e "$SCRIPT_DIR/rollup.sh" || true)
-printf '%s\n%s\n%s\n' "$CUR" "$LINE" "$WLINE" | grep -v '^$' | crontab -
-say "daily : $LINE"
-say "weekly: $WLINE"
+printf '%s\n%s\n%s\n%s\n' "$CUR" "$LINE" "$WLINE" "$MLINE" | grep -v '^$' | crontab -
+say "daily  : $LINE"
+say "weekly : $WLINE"
+say "monthly: $MLINE"
 
 # ── 6. Test run ──
 echo "[6/6] Test run (--dry-run, nothing is written)"
@@ -114,7 +171,7 @@ bash "$SCRIPT_DIR/daily.sh" --dry-run 2>&1 | head -8
 cat <<EOF
 
 == Done ==
-Your daily log will be written every day at ${CRON_TIME#* }:$(printf '%02d' "${CRON_TIME%% *}").
+Your daily log will be written every day at $(printf '%02d:%02d' "$CRON_HOUR" "$CRON_MIN").
 
   Write today's log now : bash $SCRIPT_DIR/daily.sh
   Preview only          : bash $SCRIPT_DIR/daily.sh --dry-run

@@ -84,7 +84,8 @@ def scan(path, day, repo, skip=""):
         if local_date(o.get("timestamp", "")) != day:
             continue
         c = o.get("cwd", "")
-        if not c.startswith(repo) or any(s in c for s in skip):
+        # Compare on a path boundary, or TRACK_REPO=~/work also matches ~/work2
+        if not (c == repo or c.startswith(repo.rstrip("/") + "/")) or any(s in c for s in skip):
             continue
         cwd = cwd or c
         if o.get("isSidechain"):          # subagent conversations are not user intent

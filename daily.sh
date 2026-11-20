@@ -38,6 +38,34 @@ if [ ! -x "${CLAUDE_BIN:-}" ]; then
   echo "[error] claude executable not found. Set CLAUDE_BIN in whylog.conf." >&2
   exit 1
 fi
+
+# Send the prompt on stdin, never as an argv entry: Linux caps a single argument at 128KB
+# (MAX_ARG_STRLEN), and a day of Korean evidence can exceed that, so an argv call dies with
+# "Argument list too long". stderr is kept so a failure says why instead of "summary failed".
+ask_claude() {   # ask_claude <prompt-file>
+  local to err out
+  to=$(command -v timeout || command -v gtimeout || true)   # macOS has no timeout by default
+  err=$(mktemp)
+  out=$(${to:+"$to" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p --model "$MODEL" \
+        --append-system-prompt "$SYS" --tools "" < "$1" 2>"$err")
+  if [ -z "$out" ] && [ -s "$err" ]; then
+    { echo "[error] claude call failed:"; tail -5 "$err"; } >&2
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+}
+
+# Blank out values shaped like credentials before any evidence leaves the machine. This is a net,
+# not a guarantee: keep real secrets out of tracked files and out of prompts.
+redact() {
+  sed -E \
+    -e 's/sk-[A-Za-z0-9_-]{16,}/[REDACTED]/g' \
+    -e 's/gh[pousr]_[A-Za-z0-9]{20,}/[REDACTED]/g' \
+    -e 's/AKIA[0-9A-Z]{12,}/[REDACTED]/g' \
+    -e 's/xox[abprs]-[A-Za-z0-9-]{10,}/[REDACTED]/g' \
+    -e 's/-----BEGIN [A-Z ]*PRIVATE KEY-----/[REDACTED KEY]/g' \
+    -e 's/([Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Dd]?|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd])([[:space:]]*[:=][[:space:]]*["'"'"']?)[A-Za-z0-9_+./-]{8,}/\1\2[REDACTED]/g'
+}
 # ================
 
 # --dry-run          : print the result only; touches no log, snapshot or git (for checking setup)
@@ -163,8 +191,14 @@ while IFS= read -r pat; do
 done <<< "$ENV_EXCLUDES"
 [ "$INIT_ONLY" -eq 1 ] && exit 0
 
-# Snapshot helper (-C makes pathspecs relative to the work folder root)
-snap() { git --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"; }
+# Snapshot helper (-C makes pathspecs relative to the work folder root).
+# The identity is fixed here so snapshot commits work on a machine where git user.name/email
+# were never set — otherwise every commit fails with "Please tell me who you are", the error is
+# swallowed, and no diff is ever produced. quotepath=false keeps non-ASCII paths readable.
+snap() {
+  git -c user.name=whylog -c user.email=whylog@localhost -c core.quotepath=false \
+      --git-dir="$SNAP" --work-tree="$TRACK_REPO" -C "$TRACK_REPO" "$@"
+}
 
 # ── (1) The day's code changes (= "what") ──
 # Normal run: stage the work tree and compare with the previous snapshot commit
@@ -210,7 +244,7 @@ if [ -n "$HAD_PREV" ] && [ -n "$DIFF_RANGE" ]; then
   # (A global head -c cut by git's alphabetical path order, so later paths were always dropped.)
   DIFF_BODY=$(
     snap diff $DIFF_RANGE --numstat --no-renames -- '*.py' '*.sh' '*.md' '*.R' '*.tex' 2>/dev/null \
-      | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { print $1+$2 "\t" $3 }' \
+      | awk -F'\t' '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { print $1+$2 "\t" $3 }' \
       | sort -k1,1nr | cut -f2 \
       | { n=0; seen=" "
           while [ "$n" -lt "$DIFF_MAX_FILES" ] && IFS= read -r f; do
@@ -234,7 +268,9 @@ if [ -n "$TARGET_DATE" ] || [ -n "$TODAY_SNAP" ]; then
 elif [ "$DRY_RUN" -eq 1 ]; then
   snap reset -q              # dry runs leave snapshot history alone
 else
-  snap commit -q -m "snapshot $DATE $TIME" >/dev/null 2>&1 || true
+  # --allow-empty: on a day with no tracked change the commit would fail, leaving no snapshot for
+  # that date, and the next backfill would report "snapshot missing" for a day that was simply quiet.
+  snap commit -q --allow-empty -m "snapshot $DATE $TIME" >/dev/null 2>&1 || true
 fi
 
 # ── (2) The day's session activity (intent = 'why', actions = 'what'), extracted from transcripts ──
@@ -263,7 +299,8 @@ try:
             proj = str(o.get("project") or "")
             if not (start <= o.get("timestamp", 0) < end):
                 continue
-            if not proj.startswith(repo) or any(s in proj for s in skip):
+            # Compare on a path boundary, or TRACK_REPO=~/work also picks up ~/work2
+            if not (proj == repo or proj.startswith(repo.rstrip("/") + "/")) or any(s in proj for s in skip):
                 continue
             d = (o.get("display") or "").strip()
             if d and not d.startswith("/") and d not in ("exit", "quit"):
@@ -274,22 +311,49 @@ print("\n".join(out[:80]))
 PY
 )
 
+# SKIP_DIR applies here too, not just to session transcripts: a folder you excluded should not
+# reach the model through the commit list or the modified-file list either.
+SKIP_PATS=()
+if [ -n "$SKIP_DIR" ]; then
+  IFS=',' read -r -a _skips <<< "$SKIP_DIR"
+  for s in "${_skips[@]}"; do
+    s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"   # trim spaces
+    [ -n "$s" ] && SKIP_PATS+=("$s")
+  done
+fi
+skipped() {   # skipped <path> → 0 when the path matches a SKIP_DIR entry
+  local p="$1" s
+  for s in ${SKIP_PATS+"${SKIP_PATS[@]}"}; do
+    case "$p" in *"$s"*) return 0 ;; esac
+  done
+  return 1
+}
+
 # Today's commits, plus files modified today (mtime) as a secondary signal
 COMMITS=$(cd "$TRACK_REPO" && git log --since="$DATE 00:00" --until="$DATE 23:59" --pretty=format:'- %h %an %s' 2>/dev/null)
 # Also collect commits from independent repos directly below (one git per project), except the log repo
 for g in "$TRACK_REPO"/*/.git; do
   r=$(dirname "$g"); [ "$r" -ef "$WORKLOG_DIR" ] && continue
+  skipped "$r" && continue
   c=$(git -C "$r" log --since="$DATE 00:00" --until="$DATE 23:59" --pretty=format:"- [$(basename "$r")] %h %an %s" 2>/dev/null)
   [ -n "$c" ] && COMMITS="${COMMITS:+$COMMITS
 }$c"
 done
 # mtime only means something relative to now — skip it in backfills, or today's files leak into a past day
 MTIME_FILES=""
+SKIP_FIND=()
+for s in ${SKIP_PATS+"${SKIP_PATS[@]}"}; do SKIP_FIND+=(-not -path "*${s}*"); done
 [ -z "$TARGET_DATE" ] && MTIME_FILES=$(cd "$TRACK_REPO" && find . -type f \( -name '*.py' -o -name '*.md' -o -name '*.sh' -o -name '*.ipynb' -o -name '*.tex' -o -name '*.R' \) \
   -mmin -960 -not -path './.git/*' -not -path "./${WORKLOG_DIR#"$TRACK_REPO"/}/*" \
   -not -path '*/node_modules/*' -not -path '*/.next/*' \
   -not -path './.antigravity-ide-server/*' -not -path './.antigravity-server/*' \
-  -not -path './.warp/*' -not -path './.vscode*' 2>/dev/null | head -80)
+  -not -path './.warp/*' -not -path './.vscode*' \
+  ${SKIP_FIND+"${SKIP_FIND[@]}"} 2>/dev/null | head -80)
+
+# Last stop before anything is sent: blank out credential-shaped values in every piece of evidence.
+DIFF_BODY=$(printf '%s' "$DIFF_BODY" | redact)
+SESSIONS=$(printf '%s' "$SESSIONS" | redact)
+PROMPTS=$(printf '%s' "$PROMPTS" | redact)
 
 # ── Code-change ('what') evidence, by situation ──
 if [ -n "$HAD_PREV" ] && [ -n "$DIFF_STAT" ]; then
@@ -349,8 +413,10 @@ fi
 if [ -z "$SESSIONS$PROMPTS$DIFF_STAT$COMMITS$MTIME_FILES" ]; then
   [ "$LANGUAGE" = "en" ] && NARRATIVE="**TL;DR**: No recorded activity." || NARRATIVE="**TL;DR**: 기록된 작업 없음."
 else
-  TO=$(command -v timeout || command -v gtimeout || true)   # macOS has no timeout by default
-  NARRATIVE=$(${TO:+"$TO" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+  PROMPT_FILE=$(mktemp)
+  printf '%s' "$PROMPT" > "$PROMPT_FILE"
+  NARRATIVE=$(ask_claude "$PROMPT_FILE")
+  rm -f "$PROMPT_FILE"
   # A refusal comes back as ordinary prose (exit 0), not an error. The format demands TL;DR first,
   # so anything else is treated as refused/malformed: retry split by project.
   if [ -n "$NARRATIVE" ] && ! printf '%s\n' "$NARRATIVE" | head -3 | grep -qF '**TL;DR**'; then
@@ -380,7 +446,7 @@ fi
     # The failure header is not 🤖, so the next run's gap guard retries this day
     [ "$LANGUAGE" = "en" ] && echo "## ⚠️ Claude summary failed → files modified today ($TIME)" || echo "## ⚠️ Claude 자동 요약 실패 → 오늘 수정된 파일 ($TIME)"
     echo '```'
-    echo "${MTIME_FILES:-없음}"
+    [ "$LANGUAGE" = "en" ] && echo "${MTIME_FILES:-none}" || echo "${MTIME_FILES:-없음}"
     echo '```'
   fi
   echo ""
@@ -391,12 +457,24 @@ bash "$SCRIPT_DIR/rollup.sh" index >/dev/null 2>&1 || echo "[warn] INDEX update 
 
 # Commit & push the log repo
 cd "$WORKLOG_DIR" || exit 1
+# Without an identity git refuses to commit and the day's log is never saved, so fall back to one
+GIT_ID=()
+git config --get user.email >/dev/null 2>&1 || GIT_ID=(-c user.name=whylog -c user.email=whylog@localhost)
 git add -A
 if ! git diff --cached --quiet; then
-  git commit -q -m "worklog: $DATE"
-  if git remote get-url origin >/dev/null 2>&1; then
-    git push -q origin main 2>/dev/null || echo "[warn] push failed"
+  git ${GIT_ID+"${GIT_ID[@]}"} commit -q -m "worklog: $DATE"
+  ORIGIN=$(git remote get-url origin 2>/dev/null || true)
+  # Last line of defence: a clone of the tool repo keeps its origin, and pushing there would
+  # publish the logs. install.sh detaches it; this refuses in case the install was skipped.
+  TOOL_REPO=$(cat "$SCRIPT_DIR/.whylog-template" 2>/dev/null || true)
+  if [ -n "$ORIGIN" ] && [ -n "$TOOL_REPO" ]; then
+    case "$ORIGIN" in
+      *"$TOOL_REPO"*)
+        echo "[warn] origin points at the whylog tool repo — refusing to push your logs there. Run install.sh." >&2
+        ORIGIN="" ;;
+    esac
   fi
+  [ -n "$ORIGIN" ] && { git push -q origin main 2>/dev/null || echo "[warn] push failed"; }
 fi
 if [ -n "$NARRATIVE" ]; then
   echo "[$DATE $TIME] log written: $LOGFILE"

@@ -12,4 +12,4 @@ jobs:
       - name: shellcheck
         run: shellcheck --severity=warning *.sh
       - name: python syntax
-        run: python3 -m py_compile extract_sessions.py
+        run: python3 -m py_compile extract_sessions.py split_summary.py

@@ -18,6 +18,22 @@ if [ -z "${CLAUDE_BIN:-}" ]; then
   CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
   [ -z "$CLAUDE_BIN" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE_BIN="$HOME/.local/bin/claude"
 fi
+
+# Send the prompt on stdin, never as an argv entry: Linux caps a single argument at 128KB
+# (MAX_ARG_STRLEN) and a month of logs is bigger than that, so an argv call fails outright with
+# "Argument list too long". stderr is kept so a failure says why.
+ask_claude() {   # ask_claude <prompt-file>
+  local to err out
+  to=$(command -v timeout || command -v gtimeout || true)   # macOS has no timeout by default
+  err=$(mktemp)
+  out=$(${to:+"$to" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p --model "$MODEL" \
+        --append-system-prompt "$SYS" --tools "" < "$1" 2>"$err")
+  if [ -z "$out" ] && [ -s "$err" ]; then
+    { echo "[error] claude call failed:"; tail -5 "$err"; } >&2
+  fi
+  rm -f "$err"
+  printf '%s' "$out"
+}
 if [ "$LANGUAGE" = "en" ]; then
   SYS="You are a non-interactive summarizer. Never ask questions. Use only the text the user gives you and output an English summary immediately."
 else
@@ -73,6 +89,9 @@ fi
 # ── Pick the period ──
 if [ "$MODE" = "week" ]; then
   REF="${2:-$(date +%Y-%m-%d)}"
+  # "last" = the week that just ended. Needed when the weekly run lands after midnight, on Monday:
+  # without it the job would summarise the week that had just started.
+  [ "$REF" = "last" ] && REF=$(python3 -c 'import datetime as dt; print(dt.date.today() - dt.timedelta(days=1))')
   # Mon–Sun week and ISO week number. Use the ISO year, or a year-end week collides with W01
   # (date's %Y-W%V labelled the week of 2024-12-30 as 2024-W01). python3 instead of GNU date -d.
   read -r START END LABEL < <(python3 - "$REF" <<'PY'
@@ -89,6 +108,8 @@ PY
   SPAN="이번 주"
 elif [ "$MODE" = "month" ]; then
   M="${2:-$(date +%Y-%m)}"
+  # "last" = the month that just ended, which is what a run on the 1st wants
+  [ "$M" = "last" ] && M=$(python3 -c 'import datetime as dt; print((dt.date.today().replace(day=1) - dt.timedelta(days=1)).strftime("%Y-%m"))')
   START="$M-01"
   END=$(python3 -c 'import calendar,sys; y,m=map(int,sys.argv[1].split("-")); print(f"{y:04d}-{m:02d}-{calendar.monthrange(y,m)[1]:02d}")' "$M")
   LABEL="$M"
@@ -133,9 +154,14 @@ ${BODY}"
 
 [Output language] Write the summary in English. Use these labels: **Key results**, **Progress by project**, **Carried over**."
 
-echo "[$TITLE] summarizing ${N} daily logs…"
-TO=$(command -v timeout || command -v gtimeout || true)   # macOS has no timeout by default
-OUT=$(${TO:+"$TO" "$TIMEOUT_SEC"} "$CLAUDE_BIN" -p "$PROMPT" --model "$MODEL" --append-system-prompt "$SYS" --tools "" 2>/dev/null)
+if [ ! -x "${CLAUDE_BIN:-}" ]; then
+  echo "[error] claude executable not found. Set CLAUDE_BIN in whylog.conf." >&2; exit 1
+fi
+echo "[$TITLE] summarizing ${N} daily logs… ($(printf '%s' "$PROMPT" | wc -c) bytes)"
+PROMPT_FILE=$(mktemp)
+printf '%s' "$PROMPT" > "$PROMPT_FILE"
+OUT=$(ask_claude "$PROMPT_FILE")
+rm -f "$PROMPT_FILE"
 [ -z "$OUT" ] && { echo "[error] summary generation failed"; exit 1; }
 
 mkdir -p "$(dirname "$OUTFILE")"

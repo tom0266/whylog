@@ -32,7 +32,7 @@ def read(name):
 def group_of(path):
     """Top-level folder under the tracked repo ('proj/x.py', './proj/x.py' or an absolute path)."""
     p = path.strip()
-    if p.startswith(repo):
+    if p == repo or p.startswith(repo.rstrip("/") + "/"):
         p = p[len(repo):]
     p = p[2:] if p.startswith("./") else p.lstrip("/")
     return p.split("/", 1)[0] or HOME
@@ -78,11 +78,23 @@ for g, d in groups.items():
 
 
 def call(prompt):
+    """Run one headless summary.
+
+    The prompt goes in on stdin, not in argv: Linux rejects a single argument over 128KB
+    (MAX_ARG_STRLEN) and a day of Korean evidence can pass that. A failure prints its reason
+    instead of disappearing into an empty string.
+    """
     try:
-        r = subprocess.run([claude, "-p", prompt, "--model", model, "--append-system-prompt", sys_prompt,
-                            "--tools", ""], capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip()
-    except Exception:
+        r = subprocess.run([claude, "-p", "--model", model, "--append-system-prompt", sys_prompt,
+                            "--tools", ""], input=prompt, capture_output=True, text=True,
+                           timeout=timeout)
+        out = r.stdout.strip()
+        if not out:
+            err = (r.stderr or "").strip().splitlines()[-5:]
+            print("[error] claude call failed: " + " / ".join(err), file=sys.stderr)
+        return out
+    except Exception as e:
+        print(f"[error] claude call failed: {e}", file=sys.stderr)
         return ""
 
 
@@ -121,10 +133,13 @@ if len(failed) == len(final):
 
 body = "\n\n".join(sections)
 if en:
-    head_prompt = ("Below is today's work log body, already written per project. Output exactly two lines and nothing else: "
+    # The [worklog-auto] marker must lead every prompt here: it is how extract_sessions.py tells
+    # whylog's own sessions from the user's. Without it, re-running or backfilling a day feeds this
+    # call's transcript back in as if it were something the user had asked for.
+    head_prompt = ("[worklog-auto] Below is today's work log body, already written per project. Output exactly two lines and nothing else: "
                    "`**TL;DR**: ` one line with the day's key result, then `**Today's flow**: ` 2-3 sentences linking what was done and why.\n\n" + body)
 else:
-    head_prompt = ("아래는 과제별로 나눠 쓴 오늘 작업 일지 본문입니다. 이것만 근거로 두 줄만 출력하세요(다른 것은 출력하지 말 것): "
+    head_prompt = ("[worklog-auto] 아래는 과제별로 나눠 쓴 오늘 작업 일지 본문입니다. 이것만 근거로 두 줄만 출력하세요(다른 것은 출력하지 말 것): "
                    "`**TL;DR**: ` 한 줄 — 오늘의 핵심 성과, `**오늘의 흐름**: ` 2~3문장 — 무엇을 왜 했고 어떻게 이어졌는지.\n\n" + body)
 head = call(head_prompt)
 if not first_line(head).startswith("**TL;DR**"):
